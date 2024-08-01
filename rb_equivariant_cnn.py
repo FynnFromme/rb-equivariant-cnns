@@ -1,17 +1,18 @@
 import math
 
+import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
-# TODO: Custom DataAugmentation, BatchNorm, Dropout, SpatialPooling layers
+# TODO: Custom DataAugmentation, BatchNorm, Dropout, SpatialPooling and Upsampling layers
 
 
 class RB3D_Conv(keras.Layer):
-    def __init__(self, channels: int, v_ksize: int, h_ksize: int, use_bias: bool = True, 
-                 strides: tuple = (1, 1, 1), padding: str = 'REFLECT', filter_initializer: keras.Initializer = None, 
+    def __init__(self, channels: int, h_ksize: int, v_ksize: int, use_bias: bool = True, 
+                 strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', filter_initializer: keras.Initializer = None, 
                  bias_initializer: keras.Initializer = None, filter_regularizer: keras.Regularizer = None, 
                  bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_Conv'):
         """A 3D Rayleigh-Bénard Convolutional layer convolves the input with a 3d filter, while parameters
@@ -27,13 +28,15 @@ class RB3D_Conv(keras.Layer):
             h_input (str): The group of input transformations.
             h_output (str):  The group of output transformations.
             channels (int): The number of output channels.
-            v_ksize (int): The size of the filter in the vertical direction.
             h_ksize (int): The size of the filter in both horizontal directions.
+            v_ksize (int): The size of the filter in the vertical direction.
             use_bias (bool): Whether to apply a bias to the output. The bias is leared independently for each channel 
                 while being shared across transformation channels to ensure equivariance. Defaults to True.
             strides (tuple, optional): Stride used in the conv operation (width, depth, height). Defaults to (1, 1, 1).
-            padding (str, optional): The padding used during convolution. Must be either 'REFLECT' (kernel wraps around
-                the boarder), 'VALID' or 'SAME'. Padding is only used horizontally.
+            h_padding (str, optional): The horizontal padding used during convolution in width and depth direction.
+                Must be either 'REFLECT' (kernel wraps around the boarder), 'VALID' or 'SAME'. Defaults to 'VALID'.
+            v_padding (str, optional): The vertical padding used during convolution in height direction.
+                Must be either 'VALID' or 'SAME'. Defaults to 'VALID'.
             filter_initializer (Initializer, optional): Initializer used to initialize the filters. Defaults to None.
             bias_initializer (Initializer, optional): Initializer used to initialize the bias. Defaults to None.
             filter_regularizer (Regularizer, optional): The regularzation applied to filter weights. Defaults to None.
@@ -42,14 +45,16 @@ class RB3D_Conv(keras.Layer):
         """
         super().__init__()
         
-        assert padding in ('REFLECT', 'VALID', 'SAME')
+        assert h_padding in ('REFLECT', 'VALID', 'SAME')
+        assert v_padding in ('VALID', 'SAME')
         
         self.channels = channels
-        self.v_ksize = v_ksize
         self.h_ksize = h_ksize
+        self.v_ksize = v_ksize
         self.use_bias = use_bias
         self.strides = strides
-        self.padding = padding
+        self.h_padding = h_padding
+        self.v_padding = v_padding
         self.filter_initializer = filter_initializer
         self.bias_initializer = bias_initializer
         self.filter_regularizer = filter_regularizer
@@ -63,7 +68,10 @@ class RB3D_Conv(keras.Layer):
             input_shape (list): The input as shape [batch_size, width, depth, height, channels]
         """
         _, self.in_width, self.in_depth, self.in_height, self.in_channels = input_shape
-        self.out_height = math.ceil((self.in_height - (self.v_ksize-1))/self.strides[2])
+        
+        self.padded_in_height = self.in_height + (sum(required_padding(self.v_ksize, self.in_height, self.strides[2])) if self.v_padding != 'VALID' else 0)
+        # self.out_height = math.ceil((self.in_height - (self.v_ksize-1))/self.strides[2]) # output height without padding
+        self.out_height = (self.padded_in_height - self.v_ksize)//self.strides[2] + 1 # TODO verify this formula
         
         filter_shape = [self.h_ksize, self.h_ksize, self.v_ksize, self.in_channels, self.out_height, self.channels]
         
@@ -87,16 +95,15 @@ class RB3D_Conv(keras.Layer):
         
         batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
         
-        padded_filters = self.pad_filters(self.filters)
+        padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
         
-        inputs_reshaped = tf.reshape(inputs, [batch_size, 
-                                              self.in_width, self.in_depth, 
-                                              self.in_height*self.in_channels])
+        padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
+        
+        # combine height and channel dimensions
+        inputs_reshaped = tf.reshape(padded_inputs, padded_inputs.shape[:3]+[np.prod(padded_inputs.shape[-2:])])
         filters_reshaped = tf.reshape(padded_filters, [self.h_ksize, self.h_ksize, 
-                                                       self.in_height*self.in_channels,
+                                                       self.padded_in_height*self.in_channels,
                                                        self.out_height*self.channels])
-        
-        inputs_reshaped = self.pad_inputs(inputs_reshaped)
         
         # conv2d output has shape [batch_size, out_width, out_depth, out_height*out_channels]
         output_reshaped = tf.nn.conv2d(inputs_reshaped, filters_reshaped, strides=self.strides[:2], padding='VALID')
@@ -115,7 +122,7 @@ class RB3D_Conv(keras.Layer):
             tf.Tensor: The padded filter of shape [x, y, in_height, in_channels, out_height, out_channels].
         """
         
-        padding_shape = filters.shape[:2] + [self.in_height-self.v_ksize] + filters.shape[3:]
+        padding_shape = filters.shape[:2] + [self.padded_in_height-self.v_ksize] + filters.shape[3:]
         padding = tf.zeros(padding_shape)
         
         # add padding below the filters
@@ -136,19 +143,24 @@ class RB3D_Conv(keras.Layer):
         """Adds padding to the input data of the layer.
 
         Args:
-            inputs (tf.Tensor): Must be of shape [batch_size, width, depth, height*in_channels]
+            inputs (tf.Tensor): Must be of shape [batch_size, width, depth, height, in_channels]
 
         Returns:
-            tf.Tensor: The padded input of shape [batch_size, width', depth', height*in_channels]
+            tf.Tensor: The padded input of shape [batch_size, width', depth', height', in_channels]
         """
-        if self.padding == 'VALID':
-            return inputs
-        
-        width_padding = required_padding(self.h_ksize, self.in_width, self.strides[0])
-        depth_padding = required_padding(self.h_ksize, self.in_depth, self.strides[1])
-        # batch, width, depth, height*channel
-        padding = [[0, 0], width_padding, depth_padding, [0, 0]] 
-        return tf.pad(inputs, padding, mode='CONSTANT' if self.padding == 'SAME' else self.padding)
+        if self.h_padding != 'VALID':        
+            width_padding = required_padding(self.h_ksize, self.in_width, self.strides[0])
+            depth_padding = required_padding(self.h_ksize, self.in_depth, self.strides[1])
+            # batch, width, depth, height, channel
+            padding = [[0, 0], width_padding, depth_padding, [0, 0], [0, 0]] 
+            inputs = tf.pad(inputs, padding, mode='CONSTANT' if self.h_padding == 'SAME' else self.h_padding)
+            
+        if self.v_padding != 'VALID':
+            height_padding = required_padding(self.v_ksize, self.in_height, self.strides[2])
+            # batch, width, depth, height, channel
+            padding = [[0, 0], [0, 0], [0, 0], height_padding, [0, 0]]
+            inputs = tf.pad(inputs, padding, mode='CONSTANT' if self.v_padding == 'SAME' else self.v_padding)
+        return inputs
         
       
 def required_padding(ksize: int, input_size: int, stride: int) -> tuple:
