@@ -6,6 +6,8 @@ from tensorflow import keras
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
+# TODO: Custom DataAugmentation, BatchNorm, Dropout, SpatialPooling layers
+
 
 class RB3D_Conv(keras.Layer):
     def __init__(self, channels: int, v_ksize: int, h_ksize: int, use_bias: bool = True, 

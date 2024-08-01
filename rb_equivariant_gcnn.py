@@ -6,6 +6,11 @@ from tensorflow import keras
 from cnns_2d.g_cnn.layers import GConv
 from cnns_2d.g_cnn.ops.gconv import splitgconv2d
 
+# TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
+#       for small translations -> especially for very high domains
+
+# TODO: Custom DataAugmentation, BatchNorm, Dropout, Spatial- and TransformationPooling layers
+
 
 class RB3D_G_Conv(GConv):
     def __init__(self, h_input: str, h_output: str, channels: int, v_ksize: int, h_ksize: int, use_bias: bool = True, 
