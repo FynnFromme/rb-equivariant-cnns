@@ -15,7 +15,7 @@ def gconv2d(input: tf.Tensor, filters: tf.Variable, strides: list, padding: str,
     gconv_indices and gconv_shape_info. These can be obtained from gconv2d_util(), and are described below.
 
     Args:
-        input (tf.Tensor): The input of shape [batches, height, width, in_transformations, in_channels].
+        input (tf.Tensor): The input of shape [batch_size, height, width, in_transformations, in_channels].
         filter (tf.Variable): The learned filter bank of shape [ksize, ksize, in_transformations*in_channels, out_channels].
             The shape for filter can be obtained from `gconv2d_util()`
         strides (list): A list of 4 integers. Index 1 and 2 refer to the spatial domain.
@@ -32,7 +32,7 @@ def gconv2d(input: tf.Tensor, filters: tf.Variable, strides: list, padding: str,
         NotImplemented: If the data_format is not supported.
 
     Returns:
-        tf.Tensor: The convolution output as a tensor with (batch, height, width, out_transformations, out_channels) axes.
+        tf.Tensor: The convolution output as a tensor with (batch_size, height, width, out_transformations, out_channels) axes.
     """
 
     if data_format != 'NHWC':
