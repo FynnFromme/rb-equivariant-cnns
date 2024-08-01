@@ -15,8 +15,8 @@ def gconv2d(input: tf.Tensor, filters: tf.Variable, strides: list, padding: str,
     gconv_indices and gconv_shape_info. These can be obtained from gconv2d_util(), and are described below.
 
     Args:
-        input (tf.Tensor): The input of shape [batches, height, width, in_channels, in_transformations].
-        filter (tf.Variable): The learned filter bank of shape [ksize, ksize, in_channels*in_transformations, out_channels].
+        input (tf.Tensor): The input of shape [batches, height, width, in_transformations, in_channels].
+        filter (tf.Variable): The learned filter bank of shape [ksize, ksize, in_transformations*in_channels, out_channels].
             The shape for filter can be obtained from `gconv2d_util()`
         strides (list): A list of 4 integers. Index 1 and 2 refer to the spatial domain.
         padding (str): A string from: "SAME", "VALID". The type of padding algorithm to use.
