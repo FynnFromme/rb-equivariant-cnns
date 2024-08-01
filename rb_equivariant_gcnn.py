@@ -10,7 +10,9 @@ from cnns_2d.g_cnn.ops.gconv import splitgconv2d
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
-# TODO: Custom DataAugmentation, BatchNorm, Dropout, Spatial- and TransformationPooling and Upsampling layers
+# TODO: Custom DataAugmentation, BatchNorm, Dropout, TransformationPooling layers
+
+# TODO: Use Interpolation in upsampling
 
 
 class RB3D_G_Conv(GConv):
@@ -196,7 +198,7 @@ class SpatialPooling(keras.Layer):
         """The Spatial Pooling Layer performs spatial pooling on each 3D feature map across both
         the channels and transformation dimension.
         
-        Input and output have shape [batch_size, width, depth, transformation, height, channels].
+        Input and output have shape [batch_size, width, depth, transformations, height, channels].
 
         Args:
             ksize (tuple, optional): The size of the pooling window. Defaults to (2,2,2).
@@ -225,7 +227,7 @@ class SpatialPooling(keras.Layer):
             in_transformations, in_channels = inputs.shape[3], inputs.shape[5]
             batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
             
-            # bring data into shape (batch_size, width, depth, height, transformation*channel)
+            # bring data into shape (batch_size, width, depth, height, transformations*channel)
             inputs = tf.transpose(inputs, [0,1,2,4,3,5])
             inputs = tf.reshape(inputs, tf.concat([[batch_size], inputs.shape[1:4], [np.prod(inputs.shape[4:])]], axis=0))
             
@@ -233,7 +235,67 @@ class SpatialPooling(keras.Layer):
                                  pooling_type=self.pooling_type, strides=self.strides,
                                  padding=self.padding, name=self.name)
 
-            # bring data back into shape (batch_size, width, depth, transformation, height, channel)
+            # bring data back into shape (batch_size, width, depth, transformations, height, channel)
+            outputs = tf.reshape(outputs, tf.concat([[batch_size], outputs.shape[1:4], [in_transformations, in_channels]], axis=0))
+            outputs = tf.transpose(outputs, [0,1,2,4,3,5])
+            
+            return outputs
+          
+
+# TODO use linear interpolation
+class UpSampling(keras.layers.UpSampling3D):
+    def __init__(self, size: tuple = (2,2,2), name: str = 'UpSampling', *args, **kwargs):
+        """A UpSampling layer increases the spatial dimensions by factors given by `size` by copying the data
+        appropriately.
+        
+        Both input and output have shape [batch_size, width, depth, transformations, height, channels].
+
+        Args:
+            size (tuple, optional): The factors of spatial increase in the three spatial dimensions. Defaults to (2,2,2).
+            name (str, optional): The name of the layer. Defaults to 'UpSampling'.
+        """
+        super().__init__(size=size, *args, **kwargs)
+        self.name = name
+        self.input_spec = keras.InputSpec(ndim=6)
+        
+    def build(self, input_shape: list):
+        # give the subclass the shape of the transformed input
+        batch_size, width, depth, transformations, height, channels = input_shape
+        super().build([batch_size, width, depth, height, transformations*channels])
+        
+    def compute_output_shape(self, input_shape: list) -> list:
+        """Computes the output shape of the layer based on its input shape.
+
+        Args:
+            input_shape (list): The shape of the input.
+
+        Returns:
+            list: The shape of the output
+        """
+        batch_size, width, depth, transformations, height, channels = input_shape
+        return [batch_size, self.size[0]*width, self.size[1]*depth, transformations, self.size[2]*height, channels]
+    
+    def call(self, inputs: tf.Tensor, *args, **kwargs) -> tf.Tensor:
+        """Up samples the input data. This is done by transforming the data into standard 3D data and using the
+        keras.UpSampling3D layer to perform the upscaling.
+
+        Args:
+            inputs (tf.Tensor): The input tensor.
+
+        Returns:
+            tf.Tensor: The up scaled data of shape 
+        """
+        with tf.name_scope(self.name) as scope:
+            in_transformations, in_channels = inputs.shape[3], inputs.shape[5]
+            batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
+            
+            # bring data into shape (batch_size, width, depth, height, transformations*channel)
+            inputs = tf.transpose(inputs, [0,1,2,4,3,5])
+            inputs = tf.reshape(inputs, tf.concat([[batch_size], inputs.shape[1:4], [np.prod(inputs.shape[4:])]], axis=0))
+            
+            outputs = super().call(inputs, *args, **kwargs)
+
+            # bring data back into shape (batch_size, width, depth, transformations, height, channel)
             outputs = tf.reshape(outputs, tf.concat([[batch_size], outputs.shape[1:4], [in_transformations, in_channels]], axis=0))
             outputs = tf.transpose(outputs, [0,1,2,4,3,5])
             

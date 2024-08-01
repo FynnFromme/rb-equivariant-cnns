@@ -7,7 +7,9 @@ from tensorflow import keras
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
-# TODO: Custom DataAugmentation, BatchNorm, Dropout, SpatialPooling and Upsampling layers
+# TODO: Custom DataAugmentation, BatchNorm, Dropout layers
+
+# TODO: Use Interpolation in upsampling
 
 
 class RB3D_Conv(keras.Layer):
@@ -218,3 +220,7 @@ class SpatialPooling(keras.Layer):
                                  padding=self.padding, name=self.name)
             
             return outputs
+        
+
+# TODO use linear interpolation
+UpSampling = keras.layers.UpSampling3D
