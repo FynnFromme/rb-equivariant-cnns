@@ -188,3 +188,53 @@ def required_padding(ksize: int, input_size: int, stride: int) -> tuple:
         padding_needed = max(ksize-(input_size%stride), 0)
 
     return padding_needed//2, math.ceil(padding_needed/2)
+
+
+class SpatialPooling(keras.Layer):
+    def __init__(self, ksize: tuple = (2,2,2), pooling_type: str = 'MAX', strides: tuple = (2,2,2),
+                 padding: str = 'VALID', name: str = 'SpatialPooling'):
+        """The Spatial Pooling Layer performs spatial pooling on each 3D feature map across both
+        the channels and transformation dimension.
+        
+        Input and output have shape [batch_size, width, depth, transformation, height, channels].
+
+        Args:
+            ksize (tuple, optional): The size of the pooling window. Defaults to (2,2,2).
+            pooling_type (str, optional): Whether to use 'MAX' or 'AVG' pooling. Defaults to 'MAX'.
+            strides (tuple, optional): The stride of the pooling window. Defaults to (2,2,2).
+            padding (str, optional): Padding of the pool operation ('VALID' or 'SAME'). Defaults to 'VALID'.
+            name (str, optional): The name of the layer. Defaults to 'SpatialPooling'.
+        """
+        super().__init__()
+        self.ksize = ksize
+        self.pooling_type = pooling_type
+        self.strides = strides
+        self.padding = padding
+        self.name = name
+       
+    def call(self, inputs: tf.Tensor) -> tf.Tensor:
+        """Applies spatial pooling to each 3D feature map of the input.
+
+        Args:
+            inputs (tf.Tensor): The input tensor.
+
+        Returns:
+            tf.Tensor: The pooled output tensor.
+        """
+        with tf.name_scope(self.name) as scope:
+            in_transformations, in_channels = inputs.shape[3], inputs.shape[5]
+            batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
+            
+            # bring data into shape (batch_size, width, depth, height, transformation*channel)
+            inputs = tf.transpose(inputs, [0,1,2,4,3,5])
+            inputs = tf.reshape(inputs, tf.concat([[batch_size], inputs.shape[1:4], [np.prod(inputs.shape[4:])]], axis=0))
+            
+            outputs = tf.nn.pool(input=inputs, window_shape=self.ksize, 
+                                 pooling_type=self.pooling_type, strides=self.strides,
+                                 padding=self.padding, name=self.name)
+
+            # bring data back into shape (batch_size, width, depth, transformation, height, channel)
+            outputs = tf.reshape(outputs, tf.concat([[batch_size], outputs.shape[1:4], [in_transformations, in_channels]], axis=0))
+            outputs = tf.transpose(outputs, [0,1,2,4,3,5])
+            
+            return outputs
