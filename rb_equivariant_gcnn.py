@@ -1,4 +1,5 @@
 import math
+from typing import Callable
 
 import numpy as np
 import tensorflow as tf
@@ -307,6 +308,40 @@ class UpSampling(keras.layers.UpSampling3D):
             outputs = tf.transpose(outputs, [0,1,2,4,3,5])
             
             return outputs
+        
+
+class TransformationPooling(keras.Layer):
+    max = tf.reduce_max
+    mean = tf.reduce_mean
+    
+    def __init__(self, fn: Callable, keepdims: bool = False, name: str = 'TransformationPooling'):
+        """The Transformation Pooling Layer pools across transformation channels resulting in a single spatial feature map for 
+        each channel, which is equivariant under transformation of the network input.
+        
+        By default the output shape is [batch_size, width, depth, height, in_channels]. If `keepdims=True`, the output shape is 
+        [batch_size, width, depth, 1, height, in_channels].
+
+        Args:
+            fn (Callable): The permutation invariant pooling function such as `tf.reduce_max` or `tf.reduce_mean`.
+            keepdims (bool, optional): Whether to keep the rotation dimension. Defaults to False.
+            name (str, optional): The name of the layer. Defaults to 'TransformationPooling'.
+        """
+        super().__init__()
+        self.fn = fn
+        self.keepdims = keepdims
+        self.name = name
+        
+    def call(self, inputs: tf.Tensor) -> tf.Tensor:
+        """Pools across the rotation channels.
+
+        Args:
+            inputs (tf.Tensor): The input tensor.
+
+        Returns:
+            tf.Tensor: The resulting output tensor with a reduced transformation dimension.
+        """
+        with tf.name_scope(self.name) as scope:
+            return self.fn(inputs, axis=-3, keepdims=self.keepdims, name=self.name)
         
 
 class BatchNorm(keras.layers.BatchNormalization):
