@@ -7,9 +7,10 @@ from tensorflow import keras
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
-# TODO: Custom DataAugmentation, BatchNorm, Dropout layers
+# TODO: Custom DataAugmentation, Dropout layers
 
 # TODO: Use Interpolation in upsampling
+# TODO: Maybe link Decoder upsamling to Encoder upsampling (ask Jason)
 
 
 class RB3D_Conv(keras.Layer):
@@ -185,7 +186,7 @@ def required_padding(ksize: int, input_size: int, stride: int) -> tuple:
 
 
 class SpatialPooling(keras.Layer):
-    def __init__(self, ksize: tuple = (2,2,2), pooling_type: str = 'MAX', strides: tuple = (2,2,2),
+    def __init__(self, ksize: tuple = (2,2,2), strides: tuple = (2,2,2), pooling_type: str = 'MAX',
                  padding: str = 'VALID', name: str = 'SpatialPooling'):
         """The Spatial Pooling Layer performs spatial pooling on each 3D feature map.
         
@@ -193,15 +194,15 @@ class SpatialPooling(keras.Layer):
 
         Args:
             ksize (tuple, optional): The size of the pooling window. Defaults to (2,2,2).
-            pooling_type (str, optional): Whether to use 'MAX' or 'AVG' pooling. Defaults to 'MAX'.
             strides (tuple, optional): The stride of the pooling window. Defaults to (2,2,2).
+            pooling_type (str, optional): Whether to use 'MAX' or 'AVG' pooling. Defaults to 'MAX'.
             padding (str, optional): Padding of the pool operation ('VALID' or 'SAME'). Defaults to 'VALID'.
             name (str, optional): The name of the layer. Defaults to 'SpatialPooling'.
         """
         super().__init__()
         self.ksize = ksize
-        self.pooling_type = pooling_type
         self.strides = strides
+        self.pooling_type = pooling_type
         self.padding = padding
         self.name = name
        
@@ -222,5 +223,50 @@ class SpatialPooling(keras.Layer):
             return outputs
         
 
-# TODO use linear interpolation
+# TODO: Maybe link Decoder upsamling to Encoder upsampling (ask Jason)
+# TODO: use linear interpolation
 UpSampling = keras.layers.UpSampling3D
+
+
+class BatchNorm(keras.layers.BatchNormalization):
+    def __init__(self, momentum: float = 0.99, epsilon: float = 0.001, name: str = 'BatchNorm', **kwargs):
+        """The Batch Normalization Layer applies batch normalization to the input. The gamma and beta parameters are
+        seperately learned for each channel as well as height.
+        
+        Input and output have shape [batch_size, width, depth, height, channels].
+
+        Args:
+            momentum (float, optional): Momentum for the moving average. Defaults to 0.99.
+            epsilon (float, optional): Small float added to the variance to avoid dividing by zero. Defaults to 0.001.
+            name (str, optional): The name of the layer. Defaults to 'BatchNorm'.
+        """
+        super().__init__(axis=-1, momentum=momentum, epsilon=epsilon, name=name, **kwargs)
+        
+    def build(self, input_shape: list):
+        # give the subclass the shape of the transformed input
+        batch_size, width, depth, height, channels = input_shape
+        super().build([batch_size, width, depth, height*channels])
+        self.input_spec = keras.InputSpec(ndim=5) # overwrite input spec set it super().build
+    
+    def call(self, inputs: tf.Tensor, *args, **kwargs) -> tf.Tensor:
+        """Apples batch normalization to the data.
+
+        Args:
+            inputs (tf.Tensor): The input tensor.
+
+        Returns:
+            tf.Tensor: The normalized data of shape [batch_size, width, depth, height, channels].
+        """
+        with tf.name_scope(self.name) as scope:
+            in_height, in_channels = inputs.shape[-2:]
+            batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
+            
+            # bring data into shape (batch_size, width, depth, height*channel)
+            inputs = tf.reshape(inputs, tf.concat([[batch_size], inputs.shape[1:3], [np.prod(inputs.shape[3:])]], axis=0))
+            
+            outputs = super().call(inputs, *args, **kwargs)
+
+            # bring data back into shape (batch_size, width, depth, height, channel)
+            outputs = tf.reshape(outputs, tf.concat([[batch_size], outputs.shape[1:3], [in_height, in_channels]], axis=0))
+            
+            return outputs
