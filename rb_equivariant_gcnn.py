@@ -10,8 +10,6 @@ from cnns_2d.g_cnn.ops.gconv import splitgconv2d
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
-# TODO: Custom DataAugmentation, Dropout, TransformationPooling layers
-
 # TODO: Use Interpolation in upsampling
 # TODO: Maybe link Decoder upsamling to Encoder upsampling (ask Jason)
 
@@ -43,7 +41,7 @@ class RB3D_G_Conv(GConv):
                 while being shared across transformation channels to ensure equivariance. Defaults to True.
             strides (tuple, optional): Stride used in the conv operation (width, depth, height). Defaults to (1, 1, 1).
             h_padding (str, optional): The horizontal padding used during convolution in width and depth direction.
-                Must be either 'REFLECT' (kernel wraps around the boarder), 'VALID' or 'SAME'. Defaults to 'VALID'.
+                Must be either 'WRAP' (kernel wraps around the boarder to the opposite side), 'VALID' or 'SAME'. Defaults to 'VALID'.
             v_padding (str, optional): The vertical padding used during convolution in height direction.
                 Must be either 'VALID' or 'SAME'. Defaults to 'VALID'.
             filter_initializer (Initializer, optional): Initializer used to initialize the filters. Defaults to None.
@@ -52,7 +50,7 @@ class RB3D_G_Conv(GConv):
             bias_regularizer (Regularizer, optional): The regularzation applied to the bias. Defaults to None.
             name (str, optional): The name of the layer. Defaults to 'RB3D_G_Conv'.
         """
-        assert h_padding in ('REFLECT', 'VALID', 'SAME')
+        assert h_padding in ('WRAP', 'VALID', 'SAME')
         assert v_padding in ('VALID', 'SAME')
         
         super().__init__(h_input=h_input, h_output=h_output, channels=channels, ksize=h_ksize, use_bias=use_bias, 
@@ -158,18 +156,25 @@ class RB3D_G_Conv(GConv):
         Returns:
             tf.Tensor: The padded input of shape [batch_size, width', depth', in_transformations, height, in_channels]
         """
-        if self.h_padding != 'VALID':        
+        if self.h_padding == 'SAME':        
             width_padding = required_padding(self.h_ksize, self.in_width, self.strides[0])
             depth_padding = required_padding(self.h_ksize, self.in_depth, self.strides[1])
             # batch, width, depth, transformation, height, channel
             padding = [[0, 0], width_padding, depth_padding, [0, 0], [0, 0], [0, 0]] 
-            inputs = tf.pad(inputs, padding, mode='CONSTANT' if self.h_padding == 'SAME' else self.h_padding)
+            inputs = tf.pad(inputs, padding, mode='CONSTANT')
+            
+        if self.h_padding == 'WRAP':
+            width_padding = required_padding(self.h_ksize, self.in_width, self.strides[0])
+            depth_padding = required_padding(self.h_ksize, self.in_depth, self.strides[1])
+            
+            inputs = tf.concat([inputs[:,-width_padding[0]:], inputs, inputs[:,:width_padding[1]]], axis=1)
+            inputs = tf.concat([inputs[:,:,-depth_padding[0]:], inputs, inputs[:,:,:depth_padding[1]]], axis=2)
 
-        if self.v_padding != 'VALID':
+        if self.v_padding == 'SAME':
             height_padding = required_padding(self.v_ksize, self.in_height, self.strides[2])
             # batch, width, depth, transformation, height, channel
             padding = [[0, 0], [0, 0], [0, 0], [0, 0], height_padding, [0, 0]]
-            inputs = tf.pad(inputs, padding, mode='CONSTANT' if self.v_padding == 'SAME' else self.v_padding)
+            inputs = tf.pad(inputs, padding, mode='CONSTANT')
             
         return inputs
         
