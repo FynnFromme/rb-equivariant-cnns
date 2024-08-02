@@ -8,6 +8,8 @@ from tensorflow import keras
 from cnns_2d.g_cnn.layers import GConv
 from cnns_2d.g_cnn.ops.gconv import splitgconv2d, transform_filter
 
+from rb_equivariant_cnn import required_padding
+
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains
 
@@ -189,25 +191,6 @@ class RB3D_G_Conv(GConv):
             inputs = tf.pad(inputs, padding, mode='CONSTANT')
             
         return inputs
-        
-      
-def required_padding(ksize: int, input_size: int, stride: int) -> tuple:
-    """Calculates the required padding for a dimension using SAME padding.
-
-    Args:
-        ksize (int): The kernel size in the dimension.
-        input_size (int): The input size in the dimension.
-        stride (int): The stride in the dimension.
-
-    Returns:
-        tuple: A tuple containing the padding on the left/bottom and right/top.
-    """
-    if ksize % stride == 0:
-        padding_needed = max(ksize-stride, 0)
-    else:
-        padding_needed = max(ksize-(input_size%stride), 0)
-
-    return padding_needed//2, math.ceil(padding_needed/2)
 
 
 class SpatialPooling(keras.Layer):
