@@ -22,8 +22,6 @@ class RB3D_Conv(keras.Layer):
         
         The input must have the shape [batch_size, width, depth, height, in_channels]. 
         The resulting output has a shape of [batch_size, width', depth', height', channels].
-        
-        Currently only VALID padding is supported.
 
         Args:
             h_input (str): The group of input transformations.
