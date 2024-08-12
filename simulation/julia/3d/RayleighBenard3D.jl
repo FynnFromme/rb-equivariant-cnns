@@ -117,12 +117,14 @@ for i in 1:totalsteps
 
 end
 
-# save data in npz file
+# save data in npy file
 # use `npzread(save_file)` (or `np.load(save_file)`` in python) to read data
-println("Saving data in .npz file...")
+println("Saving data in .npy file...")
 
 simulation_name = "$(Nx)_$(Ny)_$(Nz)_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
-save_file = joinpath(dirpath, "data", "$(save_file).npz")
-npzwrite(save_file, temps=temps, vels=vels)
+data_dir = joinpath(dirpath, "data", simulation_name)
+mkpath(data_dir)
+save_file = joinpath(data_dir, "sim.npy")
+npzwrite(save_file, temperature=temps, velocity=vels)
 
 println("Simulation data saved as: $(save_file)")
