@@ -7,7 +7,7 @@ using NPZ
 # using CUDA # (1) julia -> ] -> add CUDA (2) uncomment line 44
 
 
-#dir variable
+# dir variable
 dirpath = string(@__DIR__)
 
 Lx = 2 * pi
@@ -90,6 +90,11 @@ vels = zeros(totalsteps + 1, 3, Nx, Ny, Nz)
 vels[1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
 vels[1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
 vels[1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
+# CUDA.@allowscalar temps[1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
+# vels = zeros(totalsteps + 1, 3, Nx, Ny, Nz)
+# CUDA.@allowscalar vels[1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
+# CUDA.@allowscalar vels[1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
+# CUDA.@allowscalar vels[1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
 for i in 1:totalsteps
 
@@ -104,7 +109,12 @@ for i in 1:totalsteps
     vels[i+1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
+    # CUDA.@allowscalar temps[i+1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
+    # CUDA.@allowscalar vels[i+1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
+    # CUDA.@allowscalar vels[i+1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
+    # CUDA.@allowscalar vels[i+1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
+    # CUDA.@allowscalar() do
     if (any(isnan, temps[i+1, :, :, :]) ||
         any(isnan, vels[i+1, 1, :, :, :]) ||
         any(isnan, vels[i+1, 2, :, :, :]) ||
@@ -112,6 +122,7 @@ for i in 1:totalsteps
 
         printstyled("[WARNING] NaN values found!\n"; color=:red)
     end
+    # end
 
     println(cur_time)
 
