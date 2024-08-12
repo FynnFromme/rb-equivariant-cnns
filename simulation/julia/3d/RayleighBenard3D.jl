@@ -1,8 +1,10 @@
+# julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl")
+
 using Printf
 using Oceananigans
-using JLD2
 using Statistics
-# using CUDA # julia -> ] -> add CUDA
+using NPZ
+# using CUDA # (1) julia -> ] -> add CUDA (2) uncomment line 44
 
 
 #dir variable
@@ -97,11 +99,30 @@ for i in 1:totalsteps
     run!(simulation)
     global cur_time += Δt_snap
 
-    # collect T
+    # collect results
     temps[i+1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
+    if (any(isnan, temps[i+1, :, :, :]) ||
+        any(isnan, vels[i+1, 1, :, :, :]) ||
+        any(isnan, vels[i+1, 2, :, :, :]) ||
+        any(isnan, vels[i+1, 3, :, :, :]))
+
+        printstyled("[WARNING] NaN values found!\n"; color=:red)
+    end
+
     println(cur_time)
+
 end
+
+# save data in npz file
+# use `npzread(save_file)` (or `np.load(save_file)`` in python) to read data
+println("Saving data in .npz file...")
+
+simulation_name = "$(Nx)_$(Ny)_$(Nz)_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+save_file = joinpath(dirpath, "data", "$(save_file).npz")
+npzwrite(save_file, temps=temps, vels=vels)
+
+println("Simulation data saved as: $(save_file)")
