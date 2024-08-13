@@ -19,7 +19,7 @@ Nz = 64
 
 Δt = 0.03
 Δt_snap = 0.3
-duration = 1000.2
+duration = 100
 
 Ra = 1e4
 Pr = 0.71
