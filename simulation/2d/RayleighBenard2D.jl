@@ -87,15 +87,21 @@ data_dir = joinpath(dirpath, "data", simulation_name)
 mkpath(data_dir) # create if not existent
 
 h5_file_path = joinpath(data_dir, "sim.h5")
-rm(h5_file_path, force=true) # overwrite file
+
+if isfile(h5_file_path)
+    print("Do you want to overwrite $(simulation_name)? (y/n)")
+    if readline() != "y"
+        exit()
+    end
+    rm(h5_file_path)
+end
+
 h5_file = h5open(h5_file_path, "w")
 
 temps = create_dataset(h5_file, "temperature", datatype(Float64),
-    dataspace(totalsteps + 1, Nx, Nz),
-    chunk=(1, Nx, Nz))
+    dataspace(totalsteps + 1, Nx, Nz), chunk=(1, Nx, Nz))
 vels = create_dataset(h5_file, "velocity", datatype(Float64),
-    dataspace(totalsteps + 1, 2, Nx, Nz),
-    chunk=(1, 1, Nx, Nz))
+    dataspace(totalsteps + 1, 2, Nx, Nz), chunk=(1, 1, Nx, Nz))
 
 # save initial state
 temps[1, :, :] = model.tracers.b[1:Nx, 1, 1:Nz]

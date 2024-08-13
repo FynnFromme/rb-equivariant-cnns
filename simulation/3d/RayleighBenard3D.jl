@@ -23,7 +23,7 @@ Nz = 64
 Δt_snap = 0.3
 duration = 1000.2
 
-Ra = 700 #1e4
+Ra = 1e4
 Pr = 0.71
 
 Re = sqrt(Ra / Pr)
@@ -89,15 +89,21 @@ data_dir = joinpath(dirpath, "data", simulation_name)
 mkpath(data_dir) # create if not existent
 
 h5_file_path = joinpath(data_dir, "sim.h5")
-rm(h5_file_path, force=true) # overwrite file
+
+if isfile(h5_file_path) 
+    print("Do you want to overwrite $(simulation_name)? (y/n)")
+    if readline() != "y"
+        exit()
+    end
+    rm(h5_file_path)
+end
+
 h5_file = h5open(h5_file_path, "w")
 
 temps = create_dataset(h5_file, "temperature", datatype(Float64),
-    dataspace(totalsteps + 1, Nx, Ny, Nz),
-    chunk=(1, Nx, Ny, Nz))
+    dataspace(totalsteps + 1, Nx, Ny, Nz), chunk=(1, Nx, Ny, Nz))
 vels = create_dataset(h5_file, "velocity", datatype(Float64),
-    dataspace(totalsteps + 1, 3, Nx, Ny, Nz),
-    chunk=(1, 1, Nx, Ny, Nz))
+    dataspace(totalsteps + 1, 3, Nx, Ny, Nz), chunk=(1, 1, Nx, Ny, Nz))
 
 # save initial state
 temps[1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
