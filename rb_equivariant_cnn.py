@@ -91,15 +91,15 @@ class RB3D_Conv(keras.Layer):
         Returns:
             tf.Tensor: The output of the layer of shape [batch_size, out_width, out_depth, out_height, out_channels].
         """
-        
         batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
         
         padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
         
         padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
         
-        # combine height and channel dimensions
-        inputs_reshaped = tf.reshape(padded_inputs, padded_inputs.shape[:3]+[np.prod(padded_inputs.shape[-2:])])
+        # combine height and channel dimensions        
+        new_input_shape = tf.concat([[batch_size], padded_inputs.shape[1:3], [np.prod(padded_inputs.shape[-2:])]], axis=0)
+        inputs_reshaped = tf.reshape(padded_inputs, new_input_shape)
         filters_reshaped = tf.reshape(padded_filters, [self.h_ksize, self.h_ksize, 
                                                        self.padded_in_height*self.in_channels,
                                                        self.out_height*self.channels])
@@ -107,7 +107,11 @@ class RB3D_Conv(keras.Layer):
         # conv2d output has shape [batch_size, out_width, out_depth, out_height*out_channels]
         output_reshaped = tf.nn.conv2d(inputs_reshaped, filters_reshaped, strides=self.strides[:2], padding='VALID')
         
-        output = tf.reshape(output_reshaped, output_reshaped.shape[:3] + [self.out_height, self.channels])
+        new_output_shape = tf.concat([[batch_size], output_reshaped.shape[1:3], [self.out_height, self.channels]], axis=0)
+        output = tf.reshape(output_reshaped, new_output_shape)
+        
+        if self.use_bias:
+                output = tf.add(output, self.bias)
         
         return output
         

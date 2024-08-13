@@ -94,19 +94,23 @@ class RB3D_LiftDN_Conv(LiftDNConv):
         Returns:
             tf.Tensor: The output of shape [batch_size, out_width, out_depth, out_transformations, out_height, out_channels].
         """
-        with tf.name_scope(self.name) as scope:            
+        with tf.name_scope(self.name) as scope:      
+            batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
+                  
             padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
         
             padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
             
             filters_reshaped = tf.reshape(padded_filters, [self.h_ksize, self.h_ksize, self.padded_in_height*self.in_channels, 
                                                            self.out_height*self.channels])
-            inputs_reshaped = tf.reshape(padded_inputs, padded_inputs.shape[:3] + [np.prod(padded_inputs.shape[-2:])])
+            new_input_shape = tf.concat([[batch_size], padded_inputs.shape[1:3], [np.prod(padded_inputs.shape[-2:])]], axis=0)
+            inputs_reshaped = tf.reshape(padded_inputs, new_input_shape)
         
             output_reshaped = se2_conv.z2_dn(inputs_reshaped, filters_reshaped, self.orientations,
                                              strides=self.strides[:2], padding='VALID', name=self.name)[0]
             
-            output = tf.reshape(output_reshaped, output_reshaped.shape[:4] + [self.out_height, self.channels])
+            new_output_shape = tf.concat([[batch_size], output_reshaped.shape[1:4], [self.out_height, self.channels]], axis=0)
+            output = tf.reshape(output_reshaped, new_output_shape)
             
             if self.use_bias:
                 output = tf.add(output, self.bias)
@@ -250,7 +254,9 @@ class RB3D_DN_Conv(DNConv):
         Returns:
             tf.Tensor: The output of shape [batch_size, out_width, out_depth, out_transformations, out_height, out_channels].
         """
-        with tf.name_scope(self.name) as scope:            
+        with tf.name_scope(self.name) as scope:      
+            batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
+                  
             padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
         
             padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
@@ -258,12 +264,14 @@ class RB3D_DN_Conv(DNConv):
             filters_reshaped = tf.reshape(padded_filters, [self.h_ksize, self.h_ksize, 
                                                            self.in_transformations, self.padded_in_height*self.in_channels, 
                                                            self.out_height*self.channels])
-            inputs_reshaped = tf.reshape(padded_inputs, padded_inputs.shape[:4] + [np.prod(padded_inputs.shape[-2:])])
+            new_input_shape = tf.concat([[batch_size], padded_inputs.shape[1:4], [np.prod(padded_inputs.shape[-2:])]], axis=0)
+            inputs_reshaped = tf.reshape(padded_inputs, new_input_shape)
         
             output_reshaped = se2_conv.dn_dn(inputs_reshaped, filters_reshaped, strides=self.strides[:2], 
                                              padding='VALID', name=self.name)[0]
             
-            output = tf.reshape(output_reshaped, output_reshaped.shape[:4] + [self.out_height, self.channels])
+            new_output_shape = tf.concat([[batch_size], output_reshaped.shape[1:4], [self.out_height, self.channels]], axis=0)
+            output = tf.reshape(output_reshaped, new_output_shape)
             
             if self.use_bias:
                 output = tf.add(output, self.bias)
