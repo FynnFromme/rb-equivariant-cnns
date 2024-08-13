@@ -20,10 +20,10 @@ Nz = 64
 
 
 Δt = 0.03
-Δt_snap = 1.5
-duration = 300
+Δt_snap = 0.3
+duration = 1000.2
 
-Ra = 1e4
+Ra = 700 #1e4
 Pr = 0.71
 
 Re = sqrt(Ra / Pr)
