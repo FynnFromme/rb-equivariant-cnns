@@ -3,8 +3,8 @@
 using Printf
 using Oceananigans
 using Statistics
-using NPZ
-# using CUDA # (1) julia -> ] -> add CUDA (2) uncomment line 44
+using HDF5
+using CUDA # (1) julia -> ] -> add CUDA (2) uncomment line 44
 
 
 # dir variable
@@ -39,11 +39,9 @@ Re = sqrt(Ra / Pr)
 kick = 0.2
 
 
-grid = RectilinearGrid(size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z=(0, Lz), topology=(Periodic, Periodic, Bounded))
-
+# grid = RectilinearGrid(size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z=(0, Lz), topology=(Periodic, Periodic, Bounded))
 # GPU version would be:
-# grid = RectilinearGrid(GPU(), size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z=(0, Lz), topology=(Periodic, Periodic, Bounded))
-
+grid = RectilinearGrid(GPU(), size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z=(0, Lz), topology=(Periodic, Periodic, Bounded))
 
 
 u_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(0),
@@ -82,22 +80,32 @@ cur_time = 0.0
 simulation.verbose = true
 
 
-# Now, run the simulation
-totalsteps = Int(duration / Δt_snap)
-temps = zeros(totalsteps + 1, Nx, Ny, Nz)
+totalsteps = Int(div(duration, Δt_snap))
+
+# Preparing HDF5 file
+simulation_name = "$(Nx)_$(Ny)_$(Nz)_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+
+data_dir = joinpath(dirpath, "data", simulation_name)
+mkpath(data_dir) # create if not existent
+
+h5_file_path = joinpath(data_dir, "sim.h5")
+rm(h5_file_path, force=true) # overwrite file
+h5_file = h5open(h5_file_path, "w")
+
+temps = create_dataset(h5_file, "temperature", datatype(Float64),
+    dataspace(totalsteps + 1, Nx, Ny, Nz),
+    chunk=(1, Nx, Ny, Nz))
+vels = create_dataset(h5_file, "velocity", datatype(Float64),
+    dataspace(totalsteps + 1, 3, Nx, Ny, Nz),
+    chunk=(1, 1, Nx, Ny, Nz))
+
+# save initial state
 temps[1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
-vels = zeros(totalsteps + 1, 3, Nx, Ny, Nz)
 vels[1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
 vels[1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
 vels[1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
-# CUDA.@allowscalar temps[1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
-# vels = zeros(totalsteps + 1, 3, Nx, Ny, Nz)
-# CUDA.@allowscalar vels[1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
-# CUDA.@allowscalar vels[1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
-# CUDA.@allowscalar vels[1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
 for i in 1:totalsteps
-
     #update the simulation stop time for the next step
     global simulation.stop_time = Δt_snap * i
 
@@ -109,33 +117,19 @@ for i in 1:totalsteps
     vels[i+1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
     vels[i+1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
-    # CUDA.@allowscalar temps[i+1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
-    # CUDA.@allowscalar vels[i+1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
-    # CUDA.@allowscalar vels[i+1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
-    # CUDA.@allowscalar vels[i+1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
-    # CUDA.@allowscalar() do
-    if (any(isnan, temps[i+1, :, :, :]) ||
-        any(isnan, vels[i+1, 1, :, :, :]) ||
-        any(isnan, vels[i+1, 2, :, :, :]) ||
-        any(isnan, vels[i+1, 3, :, :, :]))
+    # check for NaNs
+    if (any(isnan, model.tracers.b[1:Nx, 1:Ny, 1:Nz]) ||
+        any(isnan, model.velocities.u[1:Nx, 1:Ny, 1:Nz]) ||
+        any(isnan, model.velocities.v[1:Nx, 1:Ny, 1:Nz]) ||
+        any(isnan, model.velocities.w[1:Nx, 1:Ny, 1:Nz]))
 
         printstyled("[WARNING] NaN values found!\n"; color=:red)
     end
-    # end
 
     println(cur_time)
-
 end
 
-# save data in npy file
-# use `npzread(save_file)` (or `np.load(save_file)`` in python) to read data
-println("Saving data in .npy file...")
 
-simulation_name = "$(Nx)_$(Ny)_$(Nz)_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
-data_dir = joinpath(dirpath, "data", simulation_name)
-mkpath(data_dir)
-save_file = joinpath(data_dir, "sim.npy")
-npzwrite(save_file, temperature=temps, velocity=vels)
-
-println("Simulation data saved as: $(save_file)")
+close(h5_file)
+println("Simulation data saved as: $(h5_file_path)")
