@@ -1,29 +1,31 @@
-# julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl")
+# run: julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl")
 
 using Printf
 using Oceananigans
 using Statistics
 using HDF5
-using CUDA # (1) julia -> ] -> add CUDA (2) uncomment line 44
+using CUDA # when using GPU: (1) julia -> ] -> add CUDA (2) uncomment line 44
 
 
-# dir variable
+# script directory
 dirpath = string(@__DIR__)
 
+# domain size
 Lx = 2 * pi
 Ly = 2 * pi
 Lz = 2
 
-Nx = 96
-Ny = 96
-Nz = 64
+# number of discrete points
+Nx = 48
+Ny = 48
+Nz = 32
 
+# time
+Δt = 0.01 # simulation delta
+Δt_snap = 0.3 # save delta
+duration = 1000.2 # duration of simulation
 
-Δt = 0.03
-Δt_snap = 0.3
-duration = 1000.2
-
-Ra = 1e4
+Ra = 2000
 Pr = 0.71
 
 Re = sqrt(Ra / Pr)
@@ -39,8 +41,9 @@ Re = sqrt(Ra / Pr)
 kick = 0.2
 
 
+# without GPU:
 # grid = RectilinearGrid(size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z=(0, Lz), topology=(Periodic, Periodic, Bounded))
-# GPU version would be:
+# with GPU:
 grid = RectilinearGrid(GPU(), size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z=(0, Lz), topology=(Periodic, Periodic, Bounded))
 
 
@@ -130,7 +133,8 @@ for i in 1:totalsteps
         any(isnan, model.velocities.v[1:Nx, 1:Ny, 1:Nz]) ||
         any(isnan, model.velocities.w[1:Nx, 1:Ny, 1:Nz]))
 
-        printstyled("[WARNING] NaN values found!\n"; color=:red)
+        printstyled("[ERROR] NaN values found!\n"; color=:red)
+        exit()
     end
 
     println(cur_time)

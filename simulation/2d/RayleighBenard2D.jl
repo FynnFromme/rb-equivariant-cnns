@@ -125,7 +125,8 @@ for i in 1:totalsteps
         any(isnan, model.velocities.u[1:Nx, 1, 1:Nz]) ||
         any(isnan, model.velocities.w[1:Nx, 1, 1:Nz]))
 
-        printstyled("[WARNING] NaN values found!\n"; color=:red)
+        printstyled("[ERROR] NaN values found!\n"; color=:red)
+        exit()
     end
 
     println(cur_time)
