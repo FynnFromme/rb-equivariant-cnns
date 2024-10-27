@@ -25,7 +25,7 @@ Nz = 32
 Δt_snap = 0.3 # save delta
 duration = 1000.2 # duration of simulation
 
-Ra = 2000
+Ra = 1500
 Pr = 0.71
 
 Re = sqrt(Ra / Pr)
@@ -103,16 +103,18 @@ end
 
 h5_file = h5open(h5_file_path, "w")
 
-temps = create_dataset(h5_file, "temperature", datatype(Float64),
-    dataspace(totalsteps + 1, Nx, Ny, Nz), chunk=(1, Nx, Ny, Nz))
-vels = create_dataset(h5_file, "velocity", datatype(Float64),
-    dataspace(totalsteps + 1, 3, Nx, Ny, Nz), chunk=(1, 1, Nx, Ny, Nz))
+data = create_dataset(h5_file, "data", datatype(Float64),
+    dataspace(totalsteps + 1, 4, Nx, Ny, Nz), chunk=(1, 1, Nx, Ny, Nz))
+# temps = create_dataset(h5_file, "temperature", datatype(Float64),
+#     dataspace(totalsteps + 1, Nx, Ny, Nz), chunk=(1, Nx, Ny, Nz))
+# vels = create_dataset(h5_file, "velocity", datatype(Float64),
+#     dataspace(totalsteps + 1, 3, Nx, Ny, Nz), chunk=(1, 1, Nx, Ny, Nz))
 
 # save initial state
-temps[1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
-vels[1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
-vels[1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
-vels[1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
+data[1, 1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
+data[1, 2, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
+data[1, 3, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
+data[1, 4, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
 for i in 1:totalsteps
     #update the simulation stop time for the next step
@@ -122,10 +124,10 @@ for i in 1:totalsteps
     global cur_time += Δt_snap
 
     # collect results
-    temps[i+1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
-    vels[i+1, 1, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
-    vels[i+1, 2, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
-    vels[i+1, 3, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
+    data[i+1, 1, :, :, :] = model.tracers.b[1:Nx, 1:Ny, 1:Nz]
+    data[i+1, 2, :, :, :] = model.velocities.u[1:Nx, 1:Ny, 1:Nz]
+    data[i+1, 3, :, :, :] = model.velocities.v[1:Nx, 1:Ny, 1:Nz]
+    data[i+1, 4, :, :, :] = model.velocities.w[1:Nx, 1:Ny, 1:Nz]
 
     # check for NaNs
     if (any(isnan, model.tracers.b[1:Nx, 1:Ny, 1:Nz]) ||

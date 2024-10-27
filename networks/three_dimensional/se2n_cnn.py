@@ -2,10 +2,10 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-import rb_equivariant_gcnn as rb_equi_gcnn
-from cnns_2d.se2n_cnn.layers import DNConv, LiftDNConv
-from cnns_2d.se2n_cnn.ops import se2_conv
-from rb_equivariant_cnn import required_padding
+import gcnn as rb_equi_gcnn
+from ..two_dimensional.se2n_cnn.layers import DNConv, LiftDNConv
+from ..two_dimensional.se2n_cnn.ops import se2_conv
+from .cnn import required_padding
 
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains

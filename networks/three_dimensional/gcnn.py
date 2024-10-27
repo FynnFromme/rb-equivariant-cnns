@@ -1,14 +1,13 @@
-import math
 from typing import Callable
 
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from cnns_2d.g_cnn.layers import GConv
-from cnns_2d.g_cnn.ops.gconv import splitgconv2d, transform_filter
+from ..two_dimensional.g_cnn.layers import GConv
+from ..two_dimensional.g_cnn.ops.gconv import splitgconv2d, transform_filter
 
-from rb_equivariant_cnn import required_padding
+from .cnn import required_padding
 
 # TODO: Maybe share weights across some small vertical interval to save on parameters and assume it is translation invariant
 #       for small translations -> especially for very high domains

@@ -11,6 +11,7 @@ from tensorflow import keras
 # TODO: Maybe link Decoder upsamling to Encoder upsampling (ask Jason)
 # TODO: Use sparse matrices
 
+# TODO: Bug bei Berechnung von out shape bei kernel size 2
 
 class RB3D_Conv(keras.Layer):
     count = 0
