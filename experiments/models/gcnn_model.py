@@ -1,6 +1,6 @@
 from tensorflow import keras
 import tensorflow as tf
-from networks.three_dimensional import gcnn
+from networks.rayleigh_benard import gcnn
 
 L2 = 0
 

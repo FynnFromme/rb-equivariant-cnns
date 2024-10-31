@@ -23,7 +23,7 @@ Nz = 32
 # time
 Δt = 0.01 # simulation delta
 Δt_snap = 0.3 # save delta
-duration = 1000.2 # duration of simulation
+duration = 300 # duration of simulation
 
 Ra = 1500
 Pr = 0.71
@@ -91,7 +91,12 @@ simulation_name = "$(Nx)_$(Ny)_$(Nz)_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
 data_dir = joinpath(dirpath, "data", simulation_name)
 mkpath(data_dir) # create if not existent
 
-h5_file_path = joinpath(data_dir, "sim.h5")
+i = 1
+while isfile(joinpath(data_dir, "sim$(i).h5"))
+    global i += 1
+end
+
+h5_file_path = joinpath(data_dir, "sim$(i).h5")
 
 if isfile(h5_file_path) 
     print("Do you want to overwrite $(simulation_name)? (y/n)")

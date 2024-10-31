@@ -1,6 +1,6 @@
 from tensorflow import keras
 import tensorflow as tf
-from networks.three_dimensional import se2n_cnn
+from networks.rayleigh_benard import se2n_cnn
 
 L2 = 0
 

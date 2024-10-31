@@ -1,5 +1,5 @@
 from tensorflow import keras
-from networks.three_dimensional import cnn
+from networks.rayleigh_benard import cnn
 
 L2 = 0
 
