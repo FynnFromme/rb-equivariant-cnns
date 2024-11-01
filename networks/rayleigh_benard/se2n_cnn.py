@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-import gcnn as rb_equi_gcnn
+from . import gcnn as rb_equi_gcnn
 from ..two_dimensional.se2n_cnn.layers import DNConv, LiftDNConv
 from ..two_dimensional.se2n_cnn.ops import se2_conv
 from .cnn import required_padding
@@ -19,7 +19,7 @@ class RB3D_LiftDN_Conv(LiftDNConv):
     def __init__(self, orientations: int, channels: int, h_ksize: int, v_ksize: int, use_bias: bool = True, 
                  strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
                  filter_initializer: keras.Initializer = None, bias_initializer: keras.Initializer = None, 
-                 filter_regularizer: keras.Regularizer = None, bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_G_Conv'):
+                 filter_regularizer: keras.Regularizer = None, bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_Lift_Conv'):
         """A Lifting DN-Convolutional Layer convolves the input of type Z2 with flipped/rotated copies of the DN 
         filters and thus resulting in a DN feature map with one transformation channel for each filter transformation.
         
@@ -46,7 +46,7 @@ class RB3D_LiftDN_Conv(LiftDNConv):
             bias_initializer (Initializer, optional): Initializer used to initialize the bias. Defaults to None.
             filter_regularizer (Regularizer, optional): The regularzation applied to filter weights. Defaults to None.
             bias_regularizer (Regularizer, optional): The regularzation applied to the bias. Defaults to None.
-            name (str, optional): The name of the layer. Defaults to 'RB3D_G_Conv'.
+            name (str, optional): The name of the layer. Defaults to 'RB3D_Lift_Conv'.
         """
         RB3D_LiftDN_Conv.count += 1
         

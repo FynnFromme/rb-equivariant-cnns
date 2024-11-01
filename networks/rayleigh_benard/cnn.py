@@ -15,8 +15,9 @@ from tensorflow import keras
 
 class RB3D_Conv(keras.Layer):
     count = 0
-    def __init__(self, channels: int, h_ksize: int, v_ksize: int, use_bias: bool = True, 
-                 strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', filter_initializer: keras.Initializer = None, 
+    def __init__(self, channels: int, h_ksize: int, v_ksize: int, v_sharing: int = 1, use_bias: bool = True, 
+                 strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
+                 filter_initializer: keras.Initializer = None, 
                  bias_initializer: keras.Initializer = None, filter_regularizer: keras.Regularizer = None, 
                  bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_Conv'):
         """A 3D Rayleigh-Bénard Convolutional layer convolves the input with a 3d filter, while parameters
@@ -32,8 +33,10 @@ class RB3D_Conv(keras.Layer):
             channels (int): The number of output channels.
             h_ksize (int): The size of the filter in both horizontal directions.
             v_ksize (int): The size of the filter in the vertical direction.
-            use_bias (bool): Whether to apply a bias to the output. The bias is leared independently for each channel 
-                while being shared across transformation channels to ensure equivariance. Defaults to True.
+            v_sharing (int, optional): The amount of vertical parameter sharing. For instance, `v_sharing=2` results
+                in two neighboring heights sharing the same filter. Defaults to 1 (no sharing).
+            use_bias (bool, optional): Whether to apply a bias to the output. The bias is leared independently for each 
+                channel while being shared across transformation channels to ensure equivariance. Defaults to True.
             strides (tuple, optional): Stride used in the conv operation (width, depth, height). Defaults to (1, 1, 1).
             h_padding (str, optional): The horizontal padding used during convolution in width and depth direction.
                 Must be either 'WRAP' (kernel wraps around the boarder to the opposite side), 'VALID' or 'SAME'. Defaults to 'VALID'.
