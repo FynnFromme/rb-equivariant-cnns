@@ -57,6 +57,7 @@ class RB3D_Conv(keras.Layer):
         self.channels = channels
         self.h_ksize = h_ksize
         self.v_ksize = v_ksize
+        self.v_sharing = v_sharing
         self.use_bias = use_bias
         self.strides = strides
         self.h_padding = h_padding
@@ -82,14 +83,17 @@ class RB3D_Conv(keras.Layer):
         
         self.out_height = (self.padded_in_height - self.v_ksize)//self.strides[2] + 1
         
-        filter_shape = [self.h_ksize, self.h_ksize, self.v_ksize, self.in_channels, self.out_height, self.channels]
+        self.seperately_learned_heights = math.ceil(self.out_height/self.v_sharing)
+        
+        filter_shape = [self.h_ksize, self.h_ksize, self.v_ksize, self.in_channels, 
+                        self.seperately_learned_heights, self.channels]
         
         self.filters = self.add_weight(name=self.name+'_w', dtype=tf.float32, shape=filter_shape,
                                        initializer=self.filter_initializer, regularizer=self.filter_regularizer)
         
         if self.use_bias:
             # different bias for every height and output channel
-            shape = [1, 1, 1, self.out_height, self.channels]
+            shape = [1, 1, 1, self.seperately_learned_heights, self.channels]
             self.bias = self.add_weight(name=self.name+'_b', dtype=tf.float32, shape=shape,
                                         initializer=self.bias_initializer, regularizer=self.bias_regularizer)
     
@@ -102,9 +106,13 @@ class RB3D_Conv(keras.Layer):
         Returns:
             tf.Tensor: The output of the layer of shape [batch_size, out_width, out_depth, out_height, out_channels].
         """
+        repetitions = [self.v_sharing]*self.seperately_learned_heights
+        repetitions[-1] -= self.seperately_learned_heights*self.v_sharing - self.out_height
+        repeated_filters = tf.repeat(self.filters, repetitions, axis=-2)
+        
         batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
         
-        padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
+        padded_filters = self.pad_filters(repeated_filters) # converts 3d kernels to 2d kernels over full height
         
         padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
         
@@ -122,7 +130,8 @@ class RB3D_Conv(keras.Layer):
         output = tf.reshape(output_reshaped, new_output_shape)
         
         if self.use_bias:
-                output = tf.add(output, self.bias)
+            repeated_bias = tf.repeat(self.bias, repetitions, axis=-2)
+            output = tf.add(output, repeated_bias)
         
         return output
         
