@@ -3,6 +3,7 @@ from typing import Callable
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+import math
 
 from ..two_dimensional.g_cnn.layers import GConv
 from ..two_dimensional.g_cnn.ops.gconv import splitgconv2d, transform_filter
@@ -18,8 +19,8 @@ from .cnn import required_padding
 
 class RB3D_G_Conv(GConv):
     count = 0
-    def __init__(self, h_input: str, h_output: str, channels: int, h_ksize: int, v_ksize: int, use_bias: bool = True, 
-                 strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
+    def __init__(self, h_input: str, h_output: str, channels: int, h_ksize: int, v_ksize: int, v_sharing: int = 1,
+                 use_bias: bool = True, strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
                  filter_initializer: keras.Initializer = None, bias_initializer: keras.Initializer = None, 
                  filter_regularizer: keras.Regularizer = None, bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_G_Conv'):
         """A G-Convolutional Layer convolves the input of type `h_input` with transformed copies of the `h_input` 
@@ -38,6 +39,8 @@ class RB3D_G_Conv(GConv):
             channels (int): The number of output channels.
             h_ksize (int): The size of the filter in both horizontal directions.
             v_ksize (int): The size of the filter in the vertical direction.
+            v_sharing (int, optional): The amount of vertical parameter sharing. For instance, `v_sharing=2` results
+                in two neighboring heights sharing the same filter. Defaults to 1 (no sharing).
             use_bias (bool): Whether to apply a bias to the output. The bias is leared independently for each channel 
                 while being shared across transformation channels to ensure equivariance. Defaults to True.
             strides (tuple, optional): Stride used in the conv operation (width, depth, height). Defaults to (1, 1, 1).
@@ -62,6 +65,7 @@ class RB3D_G_Conv(GConv):
                          bias_regularizer=bias_regularizer, name=name+str(RB3D_G_Conv.count))
         self.h_ksize = h_ksize
         self.v_ksize = v_ksize
+        self.v_sharing = v_sharing
         self.h_padding = h_padding
         self.v_padding = v_padding
         
@@ -81,14 +85,16 @@ class RB3D_G_Conv(GConv):
             h_input=self.h_input, h_output=self.h_output, in_channels=self.padded_in_height*self.in_channels, 
             out_channels=self.out_height*self.channels, ksize=self.h_ksize)
         
+        self.seperately_learned_heights = math.ceil(self.out_height/self.v_sharing)
+        
         filter_shape = [self.h_ksize, self.h_ksize, self.in_transformations, 
-                        self.v_ksize, self.in_channels, self.out_height, self.channels]
+                        self.v_ksize, self.in_channels, self.seperately_learned_heights, self.channels]
         
         self.filters = self.add_weight(name=self.name+'_w', dtype=tf.float32, shape=filter_shape,
                                        initializer=self.filter_initializer, regularizer=self.filter_regularizer)
         
         if self.use_bias:
-            shape = [1, 1, 1, 1, self.out_height, self.channels]
+            shape = [1, 1, 1, 1, self.seperately_learned_heights, self.channels]
             self.bias = self.add_weight(name=self.name+'_b', dtype=tf.float32, shape=shape,
                                         initializer=self.bias_initializer, regularizer=self.bias_regularizer)
     
@@ -101,10 +107,15 @@ class RB3D_G_Conv(GConv):
         Returns:
             tf.Tensor: The output of shape [batch_size, out_width, out_depth, out_transformations, out_height, out_channels].
         """
-        with tf.name_scope(self.name) as scope:            
+        with tf.name_scope(self.name) as scope:   
+            repetitions = [self.v_sharing]*self.seperately_learned_heights
+            repetitions[-1] -= self.seperately_learned_heights*self.v_sharing - self.out_height
+            repeated_filters = tf.repeat(self.filters, repetitions, axis=-2)
+        
+                 
             batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
             
-            padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
+            padded_filters = self.pad_filters(repeated_filters) # converts 3d kernels to 2d kernels over full height
         
             padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
             
@@ -122,24 +133,10 @@ class RB3D_G_Conv(GConv):
             output = tf.reshape(output_reshaped, new_output_shape)
             
             if self.use_bias:
-                output = tf.add(output, self.bias)
+                repeated_bias = tf.repeat(self.bias, repetitions, axis=-2)
+                output = tf.add(output, repeated_bias)
                 
             return output
-        
-    def get_transformed_filters(self) -> tf.Tensor:
-        """Calculates the transformed filters based on the currently learned weights.
-
-        Returns:
-            tf.Tensor: The transformed filters of shape 
-                [out_transformations, filter_size, filter_size, in_transformations, in_channels, channels].
-        """
-        no, nto, ni, nti, n = self.gconv_shape_info
-        ni = self.v_ksize*self.in_channels
-        filters = transform_filter.transform_filter_2d_nhwc(w=self.get_weights()[0], flat_indices=self.gconv_indices, 
-                                           shape_info=(no, nto, ni, nti, n))
-        filters = tf.reshape(filters, [n, n, nti, ni, nto, no])
-        filters = tf.transpose(filters, [4, 0, 1, 2, 3, 5])
-        return filters
         
     def pad_filters(self, filters: tf.Tensor) -> tf.Tensor:
         """Pads the 3D convolution filters of height z with zeros to the height of the input data.

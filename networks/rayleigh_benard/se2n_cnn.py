@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+import math
 
 from . import gcnn as rb_equi_gcnn
 from ..two_dimensional.se2n_cnn.layers import DNConv, LiftDNConv
@@ -16,8 +17,8 @@ from .cnn import required_padding
 
 class RB3D_LiftDN_Conv(LiftDNConv):
     count = 0
-    def __init__(self, orientations: int, channels: int, h_ksize: int, v_ksize: int, use_bias: bool = True, 
-                 strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
+    def __init__(self, orientations: int, channels: int, h_ksize: int, v_ksize: int, v_sharing: int = 1, 
+                 use_bias: bool = True, strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
                  filter_initializer: keras.Initializer = None, bias_initializer: keras.Initializer = None, 
                  filter_regularizer: keras.Regularizer = None, bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_Lift_Conv'):
         """A Lifting DN-Convolutional Layer convolves the input of type Z2 with flipped/rotated copies of the DN 
@@ -35,6 +36,8 @@ class RB3D_LiftDN_Conv(LiftDNConv):
             channels (int): The number of output channels.
             h_ksize (int): The size of the filter in both horizontal directions.
             v_ksize (int): The size of the filter in the vertical direction.
+            v_sharing (int, optional): The amount of vertical parameter sharing. For instance, `v_sharing=2` results
+                in two neighboring heights sharing the same filter. Defaults to 1 (no sharing).
             use_bias (bool): Whether to apply a bias to the output. The bias is leared independently for each channel 
                 while being shared across transformation channels to ensure equivariance. Defaults to True.
             strides (tuple, optional): Stride used in the conv operation (width, depth, height). Defaults to (1, 1, 1).
@@ -60,6 +63,7 @@ class RB3D_LiftDN_Conv(LiftDNConv):
                          bias_regularizer=bias_regularizer, name=name+str(RB3D_LiftDN_Conv.count))
         self.h_ksize = h_ksize
         self.v_ksize = v_ksize
+        self.v_sharing = v_sharing
         self.h_padding = h_padding
         self.v_padding = v_padding
         
@@ -75,13 +79,16 @@ class RB3D_LiftDN_Conv(LiftDNConv):
         # self.out_height = math.ceil((self.in_height - (self.v_ksize-1))/self.strides[2]) # output height without padding
         self.out_height = (self.padded_in_height - self.v_ksize)//self.strides[2] + 1 # TODO verify this formula
         
-        filter_shape = [self.h_ksize, self.h_ksize, self.v_ksize, self.in_channels, self.out_height, self.channels]
+        self.seperately_learned_heights = math.ceil(self.out_height/self.v_sharing)
+        
+        filter_shape = [self.h_ksize, self.h_ksize, self.v_ksize, self.in_channels, 
+                        self.seperately_learned_heights, self.channels]
         
         self.filters = self.add_weight(name=self.name+'_w', dtype=tf.float32, shape=filter_shape,
                                        initializer=self.filter_initializer, regularizer=self.filter_regularizer)
         
         if self.use_bias:
-            shape = [1, 1, 1, 1, self.out_height, self.channels]
+            shape = [1, 1, 1, 1, self.seperately_learned_heights, self.channels]
             self.bias = self.add_weight(name=self.name+'_b', dtype=tf.float32, shape=shape,
                                         initializer=self.bias_initializer, regularizer=self.bias_regularizer)
     
@@ -94,10 +101,14 @@ class RB3D_LiftDN_Conv(LiftDNConv):
         Returns:
             tf.Tensor: The output of shape [batch_size, out_width, out_depth, out_transformations, out_height, out_channels].
         """
-        with tf.name_scope(self.name) as scope:      
+        with tf.name_scope(self.name) as scope:    
+            repetitions = [self.v_sharing]*self.seperately_learned_heights
+            repetitions[-1] -= self.seperately_learned_heights*self.v_sharing - self.out_height
+            repeated_filters = tf.repeat(self.filters, repetitions, axis=-2)
+          
             batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
                   
-            padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
+            padded_filters = self.pad_filters(repeated_filters) # converts 3d kernels to 2d kernels over full height
         
             padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
             
@@ -113,7 +124,8 @@ class RB3D_LiftDN_Conv(LiftDNConv):
             output = tf.reshape(output_reshaped, new_output_shape)
             
             if self.use_bias:
-                output = tf.add(output, self.bias)
+                repeated_bias = tf.repeat(self.bias, repetitions, axis=-2)
+                output = tf.add(output, repeated_bias)
                 
             return output
         
@@ -179,7 +191,7 @@ class RB3D_LiftDN_Conv(LiftDNConv):
 
 class RB3D_DN_Conv(DNConv):
     count = 0
-    def __init__(self, channels: int, h_ksize: int, v_ksize: int, use_bias: bool = True, 
+    def __init__(self, channels: int, h_ksize: int, v_ksize: int, v_sharing: int = 1, use_bias: bool = True, 
                  strides: tuple = (1, 1, 1), h_padding: str = 'VALID', v_padding: str = 'VALID', 
                  filter_initializer: keras.Initializer = None, bias_initializer: keras.Initializer = None, 
                  filter_regularizer: keras.Regularizer = None, bias_regularizer: keras.Regularizer = None, name: str = 'RB3D_G_Conv'):
@@ -197,6 +209,8 @@ class RB3D_DN_Conv(DNConv):
             channels (int): The number of output channels.
             h_ksize (int): The size of the filter in both horizontal directions.
             v_ksize (int): The size of the filter in the vertical direction.
+            v_sharing (int, optional): The amount of vertical parameter sharing. For instance, `v_sharing=2` results
+                in two neighboring heights sharing the same filter. Defaults to 1 (no sharing).
             use_bias (bool): Whether to apply a bias to the output. The bias is leared independently for each channel 
                 while being shared across transformation channels to ensure equivariance. Defaults to True.
             strides (tuple, optional): Stride used in the conv operation (width, depth, height). Defaults to (1, 1, 1).
@@ -222,6 +236,7 @@ class RB3D_DN_Conv(DNConv):
                          bias_regularizer=bias_regularizer, name=name+str(RB3D_DN_Conv.count))
         self.h_ksize = h_ksize
         self.v_ksize = v_ksize
+        self.v_sharing = v_sharing
         self.h_padding = h_padding
         self.v_padding = v_padding
         
@@ -237,14 +252,16 @@ class RB3D_DN_Conv(DNConv):
         # self.out_height = math.ceil((self.in_height - (self.v_ksize-1))/self.strides[2]) # output height without padding
         self.out_height = (self.padded_in_height - self.v_ksize)//self.strides[2] + 1 # TODO verify this formula
         
-        filter_shape = [self.h_ksize, self.h_ksize, self.in_transformations, 
-                        self.v_ksize, self.in_channels, self.out_height, self.channels]
+        self.seperately_learned_heights = math.ceil(self.out_height/self.v_sharing)
+        
+        filter_shape = [self.h_ksize, self.h_ksize, self.in_transformations, self.v_ksize, self.in_channels, 
+                        self.seperately_learned_heights, self.channels]
         
         self.filters = self.add_weight(name=self.name+'_w', dtype=tf.float32, shape=filter_shape,
                                        initializer=self.filter_initializer, regularizer=self.filter_regularizer)
         
         if self.use_bias:
-            shape = [1, 1, 1, 1, self.out_height, self.channels]
+            shape = [1, 1, 1, 1, self.seperately_learned_heights, self.channels]
             self.bias = self.add_weight(name=self.name+'_b', dtype=tf.float32, shape=shape,
                                         initializer=self.bias_initializer, regularizer=self.bias_regularizer)
     
@@ -257,10 +274,14 @@ class RB3D_DN_Conv(DNConv):
         Returns:
             tf.Tensor: The output of shape [batch_size, out_width, out_depth, out_transformations, out_height, out_channels].
         """
-        with tf.name_scope(self.name) as scope:      
+        with tf.name_scope(self.name) as scope:  
+            repetitions = [self.v_sharing]*self.seperately_learned_heights
+            repetitions[-1] -= self.seperately_learned_heights*self.v_sharing - self.out_height
+            repeated_filters = tf.repeat(self.filters, repetitions, axis=-2)   
+             
             batch_size = tf.shape(inputs)[0] # batch size is unknown during construction, thus use tf.shape
                   
-            padded_filters = self.pad_filters(self.filters) # converts 3d kernels to 2d kernels over full height
+            padded_filters = self.pad_filters(repeated_filters) # converts 3d kernels to 2d kernels over full height
         
             padded_inputs = self.pad_inputs(inputs) # add conventional padding to inputs
             
@@ -277,7 +298,8 @@ class RB3D_DN_Conv(DNConv):
             output = tf.reshape(output_reshaped, new_output_shape)
             
             if self.use_bias:
-                output = tf.add(output, self.bias)
+                repeated_bias = tf.repeat(self.bias, repetitions, axis=-2)
+                output = tf.add(output, repeated_bias)
                 
             return output
         
