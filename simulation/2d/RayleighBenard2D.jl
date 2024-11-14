@@ -1,137 +1,179 @@
-# julia -> ] -> activate . -> backspace -> include("RayleighBenard2D.jl")
+# run: julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl")
 
 using Printf
+import Random
 using Oceananigans
 using Statistics
 using HDF5
-# using CUDA # (1) julia -> ] -> add CUDA (2) uncomment line 42
+using CUDA # when using GPU: (1) julia -> ] -> add CUDA (2) uncomment line 44
 
 
-#dir variable
+# script directory
 dirpath = string(@__DIR__)
 
-Lx = 2 * pi
-Lz = 2
+# domain size
+L = (2 * pi, 2) # x,z
 
-Nx = 96
-Nz = 64
+# number of discrete sampled points
+N = (128, 64)
 
+# time
+Δt = 0.01 # simulation delta
+Δt_snap = 0.3 # save delta
+duration = 300 # duration of simulation
 
-Δt = 0.03
-Δt_snap = 0.3
-duration = 100
+# temperature
+min_b = 0 # Temperature at top plate
+Δb = 1 # Temperature difference between bottom and top plate
 
-Ra = 1e4
+# Rayleigh Benard Parameters
+Ra = 10^7
 Pr = 0.71
 
-Re = sqrt(Ra / Pr)
+# Set the amplitude of the random initial perturbation (kick)
+random_kick = 0.2
 
-ν = 1 / Re
-κ = 1 / Re
+function simulate_2d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
+    Δt=Δt, Δt_snap=Δt_snap, duration=duration)
 
+    ν = sqrt(Pr * Δb * L[2]^3 / Ra) #! gravitational constant and thermal expansion missing
+    κ = ν / Pr
 
-# Temperature difference between bottom and top plate
-Δb = 1
+    totalsteps = Int(div(duration, Δt_snap))
 
-# Set the amplitude of the random perturbation (kick)
-kick = 0.2
+    grid = define_sample_grid(N, L)
+    u_bcs, b_bcs = define_boundary_conditions(min_b, Δb)
 
+    for i ∈ 1:random_initializations
+        # Make sure that every random initialization is indeed independend of each other
+        # (even when script is restarted)
+        Random.seed!(i)
 
-grid = RectilinearGrid(size=(Nx, Nz), x=(0, Lx), z=(0, Lz), topology=(Periodic, Flat, Bounded))
+        model = define_model(grid, ν, κ, u_bcs, b_bcs)
+        initialize_model(model, min_b, L[2], Δb, random_kick)
 
-# GPU version would be:
-# grid = RectilinearGrid(GPU(), size = (Nx, Nz), x = (0, Lx), z = (0, Lz), topology = (Periodic, Flat, Bounded))
+        simulation_name = "$(N[1])_$(N[2])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+        h5_file, dataset, h5_file_path = create_hdf5_dataset(simulation_name, N, totalsteps)
 
+        simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
 
-
-u_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(0),
-    bottom=ValueBoundaryCondition(0))
-# v: vel in y direction
-# w_bcs = FieldBoundaryConditions(top = ValueBoundaryCondition(0),
-#                                 bottom = ValueBoundaryCondition(0))
-b_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(1),
-    bottom=ValueBoundaryCondition(1 + Δb))
-
-model = NonhydrostaticModel(; grid,
-    advection=UpwindBiasedFifthOrder(),
-    timestepper=:RungeKutta3,
-    tracers=(:b),
-    buoyancy=Buoyancy(model=BuoyancyTracer()),
-    closure=(ScalarDiffusivity(ν=ν, κ=κ)),
-    boundary_conditions=(u=u_bcs, b=b_bcs,),
-    coriolis=nothing
-)
-
-# Set initial conditions
-uᵢ(x, z) = kick * randn()
-wᵢ(x, z) = kick * randn()
-bᵢ(x, z) = 1 + (2 - z) * Δb / 2 + kick * randn()
-
-# Send the initial conditions to the model to initialize the variables
-set!(model, u=uᵢ, w=wᵢ, b=bᵢ)
-
-# Now, we create a 'simulation' to run the model for a specified length of time
-simulation = Simulation(model, Δt=Δt, stop_time=Δt_snap)
-
-cur_time = 0.0
-
-simulation.verbose = true
-
-
-totalsteps = Int(div(duration, Δt_snap))
-
-# Preparing HDF5 file
-simulation_name = "$(Nx)_$(Nz)_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
-
-data_dir = joinpath(dirpath, "data", simulation_name)
-mkpath(data_dir) # create if not existent
-
-h5_file_path = joinpath(data_dir, "sim.h5")
-
-if isfile(h5_file_path)
-    print("Do you want to overwrite $(simulation_name)? (y/n)")
-    if readline() != "y"
-        exit()
+        close(h5_file)
+        println("Simulation data saved as: $(h5_file_path)")
     end
-    rm(h5_file_path)
 end
 
-h5_file = h5open(h5_file_path, "w")
-
-temps = create_dataset(h5_file, "temperature", datatype(Float64),
-    dataspace(totalsteps + 1, Nx, Nz), chunk=(1, Nx, Nz))
-vels = create_dataset(h5_file, "velocity", datatype(Float64),
-    dataspace(totalsteps + 1, 2, Nx, Nz), chunk=(1, 1, Nx, Nz))
-
-# save initial state
-temps[1, :, :] = model.tracers.b[1:Nx, 1, 1:Nz]
-vels[1, 1, :, :] = model.velocities.u[1:Nx, 1, 1:Nz]
-vels[1, 2, :, :] = model.velocities.v[1:Nx, 1, 1:Nz]
-
-for i in 1:totalsteps
-    #update the simulation stop time for the next step
-    global simulation.stop_time = Δt_snap * i
-
-    run!(simulation)
-    global cur_time += Δt_snap
-
-    # collect results
-    temps[i+1, :, :] = model.tracers.b[1:Nx, 1, 1:Nz]
-    vels[i+1, 1, :, :] = model.velocities.u[1:Nx, 1, 1:Nz]
-    vels[i+1, 2, :, :] = model.velocities.w[1:Nx, 1, 1:Nz]
-
-    # check for NaNs
-    if (any(isnan, model.tracers.b[1:Nx, 1, 1:Nz]) ||
-        any(isnan, model.velocities.u[1:Nx, 1, 1:Nz]) ||
-        any(isnan, model.velocities.w[1:Nx, 1, 1:Nz]))
-
-        printstyled("[ERROR] NaN values found!\n"; color=:red)
-        exit()
-    end
-
-    println(cur_time)
+function define_sample_grid(N, L)
+    # without GPU:
+    # grid = RectilinearGrid(size=(N), x=(0, L[1]), z=(0, L[2]), 
+    #  topology=(Periodic, Flat, Bounded))
+    # with GPU:
+    grid = RectilinearGrid(GPU(), size=N, x=(0, L[1]), z=(0, L[2]),
+        topology=(Periodic, Flat, Bounded))
+    return grid
 end
 
 
-close(h5_file)
-println("Simulation data saved as: $(h5_file_path)")
+function define_boundary_conditions(min_b, Δb)
+    u_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(0),
+        bottom=ValueBoundaryCondition(0))
+    #! why are vertical velocities not bounded?
+    # w_bcs = FieldBoundaryConditions(top = ValueBoundaryCondition(0),
+    #                                 bottom = ValueBoundaryCondition(0))
+    b_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(min_b),
+        bottom=ValueBoundaryCondition(min_b + Δb))
+    return u_bcs, b_bcs
+end
+
+
+function define_model(grid, ν, κ, u_bcs, b_bcs)
+    model = NonhydrostaticModel(; grid,
+        advection=UpwindBiasedFifthOrder(),
+        timestepper=:RungeKutta3,
+        tracers=(:b),
+        buoyancy=Buoyancy(model=BuoyancyTracer()),
+        closure=(ScalarDiffusivity(ν=ν, κ=κ)),
+        boundary_conditions=(u=u_bcs, b=b_bcs,),
+        coriolis=nothing
+    )
+    return model
+end
+
+
+function initialize_model(model, min_b, Lz, Δb, kick)
+    # Set initial conditions
+    uᵢ(x, z) = kick * randn()
+    wᵢ(x, z) = kick * randn()
+    bᵢ(x, z) = min_b + (Lz - z) * Δb / 2 + kick * randn()
+
+    # Send the initial conditions to the model to initialize the variables
+    set!(model, u=uᵢ, w=wᵢ, b=bᵢ)
+end
+
+
+function create_hdf5_dataset(simulation_name, N, totalsteps)
+    data_dir = joinpath(dirpath, "data", simulation_name)
+    mkpath(data_dir) # create directory if not existent
+
+    # compute number of this simulation
+    i = 1
+    while isfile(joinpath(data_dir, "sim$(i).h5"))
+        i += 1
+    end
+
+    path = joinpath(data_dir, "sim$(i).h5")
+    h5_file = h5open(path, "w")
+    # save temperature and velocities in one dataset:
+    dataset = create_dataset(h5_file, "data", datatype(Float64),
+        dataspace(totalsteps + 1, 3, N...), chunk=(1, 1, N...))
+
+    # seperate datasets for temperature and velocity:
+    # temps = create_dataset(h5_file, "temperature", datatype(Float64),
+    #     dataspace(totalsteps + 1, N...), chunk=(1, N...))
+    # vels = create_dataset(h5_file, "velocity", datatype(Float64),
+    #     dataspace(totalsteps + 1, 2, N...), chunk=(1, 1, N...))
+
+    return h5_file, dataset, path
+end
+
+
+function simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
+    simulation = Simulation(model, Δt=Δt, stop_time=Δt_snap)
+    simulation.verbose = true
+
+    cur_time = 0.0
+
+    # save initial state
+    save_simulation_step(model, dataset, 1, N)
+
+    for i in 1:totalsteps
+        #update the simulation stop time for the next step
+        global simulation.stop_time = Δt_snap * i
+
+        run!(simulation)
+        cur_time += Δt_snap
+
+        save_simulation_step(model, dataset, i + 1, N)
+
+        if (step_contains_NaNs(model, N))
+            printstyled("[ERROR] NaN values found!\n"; color=:red)
+            return
+        end
+
+        println(cur_time)
+    end
+end
+
+
+function save_simulation_step(model, dataset, step, N)
+    dataset[step, 1, :, :] = model.tracers.b[1:N[1], 1, 1:N[2]]
+    dataset[step, 2, :, :] = model.velocities.u[1:N[1], 1, 1:N[2]]
+    dataset[step, 3, :, :] = model.velocities.w[1:N[1], 1, 1:N[2]]
+end
+
+
+function step_contains_NaNs(model, N)
+    contains_nans = (any(isnan, model.tracers.b[1:N[1], 1, 1:N[2]]) ||
+                     any(isnan, model.velocities.u[1:N[1], 1, 1:N[2]]) ||
+                     any(isnan, model.velocities.w[1:N[1], 1, 1:N[2]]))
+    return contains_nans
+end

@@ -8,6 +8,14 @@ def build(horizontal_size, height, rb_channels, batch_size):
             keras.layers.InputLayer(shape=(horizontal_size, horizontal_size, height, rb_channels),
                                     batch_size=batch_size),
             
+            ##########################
+            #    Data Augmentation   #
+            ##########################
+            keras.layers.Reshape((horizontal_size, horizontal_size, height*rb_channels)),
+            keras.layers.RandomRotation(factor=1, fill_mode='wrap', interpolation='bilinear'),
+            keras.layers.RandomFlip(mode='horizontal_and_vertical'),
+            keras.layers.Reshape((horizontal_size, horizontal_size, height, rb_channels)),
+            
             ###############
             #   Encoder   #
             ###############

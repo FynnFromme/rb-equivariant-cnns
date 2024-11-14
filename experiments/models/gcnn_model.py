@@ -1,6 +1,7 @@
 from tensorflow import keras
 import tensorflow as tf
 from networks.rayleigh_benard import gcnn
+import numpy as np
 
 L2 = 0
 
@@ -8,6 +9,13 @@ def build(horizontal_size, height, rb_channels, batch_size, G='D4', v_sharing=1)
     model = keras.Sequential([
             keras.layers.InputLayer(shape=(horizontal_size, horizontal_size, height, rb_channels),
                                     batch_size=batch_size),
+            
+            ##########################
+            #    Data Augmentation   #
+            ##########################
+            keras.layers.Reshape((horizontal_size, horizontal_size, height*rb_channels)),
+            keras.layers.RandomRotation(factor=1, fill_mode='wrap', interpolation='bilinear'),
+            keras.layers.RandomFlip(mode='horizontal_and_vertical'),
             
             # add transformation dimension
             keras.layers.Reshape((horizontal_size, horizontal_size, 1, height, rb_channels)), 

@@ -1,6 +1,7 @@
 # run: julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl")
 
 using Printf
+import Random
 using Oceananigans
 using Statistics
 using HDF5
@@ -26,34 +27,39 @@ min_b = 0 # Temperature at top plate
 Δb = 1 # Temperature difference between bottom and top plate
 
 # Rayleigh Benard Parameters
-Ra = 10000
+Ra = 10^4
 Pr = 0.71
 
 # Set the amplitude of the random initial perturbation (kick)
 random_kick = 0.2
 
-
-function simulate_3d_rb(Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
+function simulate_3d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
     Δt=Δt, Δt_snap=Δt_snap, duration=duration)
 
-    ν = sqrt(Pr * Δb * L[3]^3 / Ra)
+    ν = sqrt(Pr * Δb * L[3]^3 / Ra) #! gravitational constant and thermal expansion missing
     κ = ν / Pr
-
-    grid = define_sample_grid(N, L)
-    u_bcs, v_bcs, b_bcs = define_boundary_conditions(min_b, Δb)
-
-    model = define_model(grid, ν, κ, u_bcs, v_bcs, b_bcs)
-    initialize_model(model, min_b, L[3], Δb, random_kick)
 
     totalsteps = Int(div(duration, Δt_snap))
 
-    simulation_name = "$(N[1])_$(N[2])_$(N[3])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
-    h5_file, dataset, h5_file_path = create_hdf5_dataset(simulation_name, N, totalsteps)
+    grid = define_sample_grid(N, L)
+    u_bcs, v_bcs, b_bcs = define_boundary_conditions(min_b, Δb)
+    
+    for i ∈ 1:random_initializations
+        # Make sure that every random initialization is indeed independend of each other
+        # (even when script is restarted)
+        Random.seed!(i)
 
-    simulate_model(model, dataset, Δt, Δt_snap, totalsteps)
+        model = define_model(grid, ν, κ, u_bcs, v_bcs, b_bcs)
+        initialize_model(model, min_b, L[3], Δb, random_kick)
+        
+        simulation_name = "$(N[1])_$(N[2])_$(N[3])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+        h5_file, dataset, h5_file_path = create_hdf5_dataset(simulation_name, N, totalsteps)
 
-    close(h5_file)
-    println("Simulation data saved as: $(h5_file_path)")
+        simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
+
+        close(h5_file)
+        println("Simulation data saved as: $(h5_file_path)")
+    end
 end
 
 function define_sample_grid(N, L)
@@ -133,7 +139,7 @@ function create_hdf5_dataset(simulation_name, N, totalsteps)
 end
 
 
-function simulate_model(model, dataset, Δt, Δt_snap, totalsteps)
+function simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
     simulation = Simulation(model, Δt=Δt, stop_time=Δt_snap)
     simulation.verbose = true
 
