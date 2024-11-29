@@ -1,12 +1,21 @@
-# run: julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl")
+#? run: cd simulation -> julia -> ] -> activate . -> backspace -> include("RayleighBenard3D.jl") -> simulate_3d_rb()
 
 using Printf
 import Random
 using Oceananigans
 using Statistics
 using HDF5
-using CUDA # when using GPU: (1) julia -> ] -> add CUDA (2) uncomment line 44
+using Plots
 
+theme(:dark)
+
+
+# supports gpu for simulation
+use_gpu = true
+
+# create animations of data
+visualize = true
+fps = 15
 
 # script directory
 dirpath = string(@__DIR__)
@@ -28,47 +37,61 @@ min_b = 0 # Temperature at top plate
 
 # Rayleigh Benard Parameters
 Ra = 10^4
-Pr = 0.71
+Pr = 0.7
 
 # Set the amplitude of the random initial perturbation (kick)
 random_kick = 0.2
 
-function simulate_3d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
-    Δt=Δt, Δt_snap=Δt_snap, duration=duration)
 
-    ν = sqrt(Pr * Δb * L[3]^3 / Ra) #! gravitational constant and thermal expansion missing
-    κ = ν / Pr
+function simulate_3d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
+    Δt=Δt, Δt_snap=Δt_snap, duration=duration, use_gpu=use_gpu, visualize=visualize, fps=fps)
+
+    ν = sqrt(Pr / Ra) # c.f. line 33: https://github.com/spectralDNS/shenfun/blob/master/demo/RayleighBenard.py
+    κ = 1 / sqrt(Pr * Ra) # c.f. line 37: https://github.com/spectralDNS/shenfun/blob/master/demo/RayleighBenard.py
 
     totalsteps = Int(div(duration, Δt_snap))
 
-    grid = define_sample_grid(N, L)
+    grid = define_sample_grid(N, L, use_gpu)
     u_bcs, v_bcs, b_bcs = define_boundary_conditions(min_b, Δb)
     
     for i ∈ 1:random_initializations
+        println("Simulating random initialization $(i)/$(random_initializations)...")
+
+        simulation_name = "$(N[1])_$(N[2])_$(N[3])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+        h5_file, dataset, h5_file_path, sim_num = create_hdf5_dataset(simulation_name, N, totalsteps)
+
         # Make sure that every random initialization is indeed independend of each other
         # (even when script is restarted)
-        Random.seed!(i)
+        Random.seed!(sim_num)
 
         model = define_model(grid, ν, κ, u_bcs, v_bcs, b_bcs)
         initialize_model(model, min_b, L[3], Δb, random_kick)
         
-        simulation_name = "$(N[1])_$(N[2])_$(N[3])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
-        h5_file, dataset, h5_file_path = create_hdf5_dataset(simulation_name, N, totalsteps)
-
         simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
+
+        if visualize
+            animation_dir = joinpath(dirpath, "data", simulation_name, "sim$(sim_num)", "animations")
+            mkpath(animation_dir)
+            for (channel_num, channel_name) in enumerate(["temp", "u", "v", "w"])
+                println("Animating $(channel_name)...")
+                visualize_simulation(dataset, animation_dir, channel_num, channel_name, fps, N, L, Δt_snap, min_b, Δb)
+            end
+        end
 
         close(h5_file)
         println("Simulation data saved as: $(h5_file_path)")
     end
 end
 
-function define_sample_grid(N, L)
-    # without GPU:
-    # grid = RectilinearGrid(size=(N), x=(0, L[1]), y=(0, L[2]), z=(0, L[3]), 
-    #  topology=(Periodic, Periodic, Bounded))
-    # with GPU:
-    grid = RectilinearGrid(GPU(), size=N, x=(0, L[1]), y=(0, L[2]), z=(0, L[3]),
-        topology=(Periodic, Periodic, Bounded))
+
+function define_sample_grid(N, L, use_gpu)
+    if use_gpu
+        grid = RectilinearGrid(GPU(), size=N, x=(0, L[1]), y=(0, L[2]), z=(0, L[3]),
+                               topology=(Periodic, Periodic, Bounded))
+    else
+        grid = RectilinearGrid(size=(N), x=(0, L[1]), y=(0, L[2]), z=(0, L[3]), 
+                               topology=(Periodic, Periodic, Bounded))
+    end
     return grid
 end
 
@@ -78,7 +101,7 @@ function define_boundary_conditions(min_b, Δb)
         bottom=ValueBoundaryCondition(0))
     v_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(0),
         bottom=ValueBoundaryCondition(0))
-    #! why are vertical velocities not bounded?
+    # no explicit boundary condition for vertical velocity (seems to be inferred automatically)
     # w_bcs = FieldBoundaryConditions(top = ValueBoundaryCondition(0),
     #                                 bottom = ValueBoundaryCondition(0))
     b_bcs = FieldBoundaryConditions(top=ValueBoundaryCondition(min_b),
@@ -118,12 +141,13 @@ function create_hdf5_dataset(simulation_name, N, totalsteps)
     mkpath(data_dir) # create directory if not existent
 
     # compute number of this simulation
-    i = 1
-    while isfile(joinpath(data_dir, "sim$(i).h5"))
-        i += 1
+    sim_num = 1
+    while isfile(joinpath(data_dir, "sim$(sim_num)", "sim.h5"))
+        sim_num += 1
     end
 
-    path = joinpath(data_dir, "sim$(i).h5")
+    mkpath(joinpath(data_dir, "sim$(sim_num)"))
+    path = joinpath(data_dir, "sim$(sim_num)", "sim.h5")
     h5_file = h5open(path, "w")
     # save temperature and velocities in one dataset:
     dataset = create_dataset(h5_file, "data", datatype(Float64),
@@ -135,7 +159,7 @@ function create_hdf5_dataset(simulation_name, N, totalsteps)
     # vels = create_dataset(h5_file, "velocity", datatype(Float64),
     #     dataspace(totalsteps + 1, 3, N...), chunk=(1, 1, N...))
 
-    return h5_file, dataset, path
+    return h5_file, dataset, path, sim_num
 end
 
 
@@ -181,4 +205,76 @@ function step_contains_NaNs(model, N)
                      any(isnan, model.velocities.v[1:N[1], 1:N[2], 1:N[3]]) ||
                      any(isnan, model.velocities.w[1:N[1], 1:N[2], 1:N[3]]))
     return contains_nans
+end
+
+
+function visualize_simulation(data, animation_dir, channel, channel_name, fps, N, L, Δt_snap, min_b, Δb)
+    width = div(N[1], 2)
+    depth = div(N[2], 2)
+    height = div(N[3], 2)
+
+    if channel == 1 # temperature channel
+        clims_width = (min_b, min_b + Δb)
+        clims_depth = (min_b, min_b + Δb)
+        clims_height = (min_b, min_b + Δb)
+    else
+        total_min = min(minimum(data[:, channel, width, :, :]), 
+                        minimum(data[:, channel, :, depth, :]), 
+                        minimum(data[:, channel, :, :, height]))
+        total_max = max(maximum(data[:, channel, width, :, :]),
+                        maximum(data[:, channel, :, depth, :]),
+                        maximum(data[:, channel, :, :, height]))
+        extreme_value = max(abs(total_min), abs(total_max))
+
+        # use same color map for all animations and center limits around zero
+        clims_width = (-extreme_value, extreme_value)
+        clims_depth = (-extreme_value, extreme_value)
+        clims_height = (-extreme_value, extreme_value)
+    end
+
+    function show_snapshot_width(i)
+        t = round((i - 1) * Δt_snap, digits=1)
+        x = range(0, L[2], length=N[2])
+        z = range(0, L[3], length=N[3])
+        snap = transpose(data[i, channel, width, :, :])
+        heatmap(x, z, snap,
+            c=:jet, clims=clims_width, aspect_ratio=:equal, xlim=(0, L[2]), ylim=(0, L[3]),
+            title="Side View (w=$(width)): 3D Rayleigh-Bénard $(channel_name) (t=$t)")
+    end
+    function show_snapshot_depth(i)
+        t = round((i - 1) * Δt_snap, digits=1)
+        x = range(0, L[1], length=N[1])
+        z = range(0, L[3], length=N[3])
+        snap = transpose(data[i, channel, :, depth, :])
+        heatmap(x, z, snap,
+            c=:jet, clims=clims_depth, aspect_ratio=:equal, xlim=(0, L[1]), ylim=(0, L[3]),
+            title="Side View (d=$(depth)): 3D Rayleigh-Bénard $(channel_name) (t=$t)")
+    end
+    function show_snapshot_height(i)
+        t = round((i - 1) * Δt_snap, digits=1)
+        x = range(0, L[1], length=N[1])
+        z = range(0, L[2], length=N[2])
+        snap = transpose(data[i, channel, :, :, height])
+        heatmap(x, z, snap,
+            c=:jet, clims=clims_height, aspect_ratio=:equal, xlim=(0, L[1]), ylim=(0, L[2]),
+            title="Top View (h=$(height)): 3D Rayleigh-Bénard $(channel_name) (t=$t)")
+    end
+
+    animation_path_width = joinpath(animation_dir, "$(channel_name)_width.mp4")
+    anim_width = @animate for i ∈ 1:size(data, 1)
+        show_snapshot_width(i)
+    end
+    mp4(anim_width, animation_path_width, fps=fps)
+
+    animation_path_depth = joinpath(animation_dir, "$(channel_name)_depth.mp4")
+    anim_depth = @animate for i ∈ 1:size(data, 1)
+        show_snapshot_depth(i)
+    end
+    mp4(anim_depth, animation_path_depth, fps=fps)
+
+    animation_path_height = joinpath(animation_dir, "$(channel_name)_height.mp4")
+    anim_height = @animate for i ∈ 1:size(data, 1)
+        show_snapshot_height(i)
+    end
+    mp4(anim_height, animation_path_height, fps=fps)
 end
