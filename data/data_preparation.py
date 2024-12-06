@@ -18,8 +18,11 @@ def prepare_data(simulation_name, use_heat_flux=False, p_train=0.6, p_valid=0.2,
     files = simulation_files(simulation_name)
     snapshots, w, d, h, sim_channels = data_shape(files)
     
-    temp_means = compute_temp_means(files) # used to calculate heat flux later
-    
+    if use_heat_flux:
+        temp_means = compute_temp_means(files) # used to calculate heat flux later
+    else:
+        temp_means = None
+        
     train_files, valid_files, test_files = split_random_initializations(files, p_train, p_valid, p_test)
     
     snapshots_per_file = snapshots-first_snapshot
@@ -170,6 +173,6 @@ def scale_data(scaler, data):
 
 
 if __name__ == '__main__':
-    prepare_data('48_48_32_10000_0.71_0.01_0.3_300', use_heat_flux=False, 
-                 p_train=0.6, p_valid=0.2, p_test=0.2, first_snapshot=0)
+    prepare_data('48_48_32_5000_0.7_0.01_0.3_300', use_heat_flux=False, 
+                 p_train=0.6, p_valid=0.2, p_test=0.2, first_snapshot=200)
     

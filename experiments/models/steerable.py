@@ -17,7 +17,7 @@ class RBModel(enn.SequentialModule):
     def __init__(self, gspace: GSpace = gspaces.flipRot2dOnR2(N=4),
                    rb_dims: tuple = (48, 48, 32),
                    v_kernel_size: int = 3,
-                   h_kernel_size: int = 5,
+                   h_kernel_size: int = 3,
                    v_pool_size: int = 2,
                    h_pool_size: int = 2,
                    v_upsampling: int = 2,
@@ -99,7 +99,7 @@ class RBModel(enn.SequentialModule):
             return out.tensor
         
         
-    def check_equivariance(self, atol: float = 1e-4, rtol: float = 1e-5) -> list[tuple[Any, float]]:
+    def check_equivariance(self, atol: float = 1e-4, rtol: float = 1e-5, gpu_device=None) -> list[tuple[Any, float]]:
         r"""
         
         Method that automatically tests the equivariance of the current module.
@@ -118,13 +118,20 @@ class RBModel(enn.SequentialModule):
         self.eval()
         
         x = torch.randn(3, self.in_type.size, *self.in_dims[:2])
+        if gpu_device: 
+            x = x.to(gpu_device)
         x = GeometricTensor(x, self.in_type)
         
         errors = []
         for el in self.in_type.testing_elements:
             
-            out1 = self(x, on_geometric_tensor=True).transform(el).tensor.detach().numpy()
-            out2 = self(x.transform(el), on_geometric_tensor=True).tensor.detach().numpy()
+            out1 = self(x, on_geometric_tensor=True).transform(el).tensor
+            out2 = self(x.transform(el), on_geometric_tensor=True).tensor
+            if gpu_device:
+                out1 = out1.cpu()
+                out2 = out2.cpu()
+            out1 = out1.detach().numpy()
+            out2 = out2.detach().numpy()
         
             errs = out1 - out2
             errs = np.abs(errs).reshape(-1)
