@@ -108,7 +108,7 @@ class RBSteerableConv(enn.EquivariantModule):
     def _concat_vertical_neighborhoods(self, geom_tensor: GeometricTensor) -> GeometricTensor:
         """geomTensor of shape [batch, inHeight*sum(fieldsizes), width, depth]
         -> [batch, outHeight*ksize*sum(fieldsizes), width, depth]"""
-        tensor = geom_tensor.tensor.reshape(-1, self.in_height, sum(field.size for field in self.in_fields), *self.in_dims[:2])
+        tensor = geom_tensor.tensor.reshape(-1, self.in_height, sum(field.size for field in self.in_fields), *self.in_dims[:2]) # split height and field dimension
 
         if self.v_pad:
             # pad height

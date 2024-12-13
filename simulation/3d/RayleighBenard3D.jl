@@ -43,7 +43,7 @@ Pr = 0.7
 random_kick = 0.2
 
 
-function simulate_3d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
+function simulate_3d_rb(; random_inits=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
     Δt=Δt, Δt_snap=Δt_snap, duration=duration, use_gpu=use_gpu, visualize=visualize, fps=fps)
 
     ν = sqrt(Pr / Ra) # c.f. line 33: https://github.com/spectralDNS/shenfun/blob/master/demo/RayleighBenard.py
@@ -54,8 +54,8 @@ function simulate_3d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_
     grid = define_sample_grid(N, L, use_gpu)
     u_bcs, v_bcs, b_bcs = define_boundary_conditions(min_b, Δb)
     
-    for i ∈ 1:random_initializations
-        println("Simulating random initialization $(i)/$(random_initializations)...")
+    for i ∈ 1:random_inits
+        println("Simulating random initialization $(i)/$(random_inits)...")
 
         simulation_name = "$(N[1])_$(N[2])_$(N[3])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
         h5_file, dataset, h5_file_path, sim_num = create_hdf5_dataset(simulation_name, N, totalsteps)
