@@ -239,5 +239,5 @@ if __name__ == '__main__':
                 p_train=0.6, p_valid=0.2, p_test=0.2, 
                 first_snapshot=200,
                 step=1 # every shapshot
-                    ).prepare_data('48_48_32_2000_0.7_0.01_1_300')
+                    ).prepare_data('48_48_32_2500_0.7_0.01_0.3_300')
     

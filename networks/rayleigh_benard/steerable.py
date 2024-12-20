@@ -17,7 +17,7 @@ class RBSteerableConv(enn.EquivariantModule):
                  gspace: GSpace, 
                  in_fields: list[Representation], 
                  out_fields: list[Representation], 
-                 in_dims: int,
+                 in_dims: tuple,
                  v_kernel_size: int,
                  h_kernel_size: int,
                  v_stride: int = 1,
@@ -201,8 +201,8 @@ def required_same_padding(in_size: int, kernel_size: int, stride: int, split: bo
         return padding
     
 
-class RBMaxPool(enn.EquivariantModule):
-    def __init__(self, gspace: GSpace, in_fields: list[Representation], in_dims: tuple, v_kernel_size: int, h_kernel_size: int):
+class RBPooling(enn.EquivariantModule):
+    def __init__(self, gspace: GSpace, in_fields: list[Representation], in_dims: tuple, v_kernel_size: int, h_kernel_size: int, type: Literal['max', 'mean'] = 'max'):
         super().__init__()
         
         self.in_dims = in_dims
@@ -220,6 +220,8 @@ class RBMaxPool(enn.EquivariantModule):
         self.in_type = FieldType(gspace, self.in_height * self.in_fields)
         self.out_type = FieldType(gspace, self.out_height * self.in_fields)
         
+        self.pool_op = F.max_pool3d if type.lower() == 'max' else F.mean_pool3d
+        
         
     def forward(self, input: GeometricTensor) -> GeometricTensor:
         assert input.type == self.in_type
@@ -227,7 +229,7 @@ class RBMaxPool(enn.EquivariantModule):
         tensor = input.tensor.reshape(-1, self.in_height, sum(field.size for field in self.in_fields), *self.in_dims[:2])
         tensor = tensor.permute(0, 2, 3, 1, 4)
         
-        pooled_tensor = F.max_pool3d(tensor, [self.h_kernel_size, self.v_kernel_size, self.h_kernel_size])
+        pooled_tensor = self.pool_op(tensor, [self.h_kernel_size, self.v_kernel_size, self.h_kernel_size])
         
         pooled_tensor = pooled_tensor.permute(0, 3, 1, 2, 4)
         batch, out_height, fieldsizes, out_width, out_depth = pooled_tensor.shape

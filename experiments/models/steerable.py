@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+from prettytable import PrettyTable
+
 from typing import Any
 from collections import OrderedDict
 
@@ -11,76 +13,115 @@ from escnn import gspaces
 
 from torch import Tensor
 
-from networks.rayleigh_benard.steerable import RBSteerableConv, RBMaxPool, RBUpsampling
+from networks.rayleigh_benard.steerable import RBSteerableConv, RBPooling, RBUpsampling
 
-class RBModel(enn.SequentialModule):
-    def __init__(self, gspace: GSpace = gspaces.flipRot2dOnR2(N=4),
-                   rb_dims: tuple = (48, 48, 32),
-                   v_kernel_size: int = 3,
-                   h_kernel_size: int = 3,
-                   v_pool_size: int = 2,
-                   h_pool_size: int = 2,
-                   v_upsampling: int = 2,
-                   h_upsampling: int = 2,
-                   drop_rate: float = 0.2,
-                   hidden_channels: tuple = 2*(10,10)
-                   ):      
+#? info: enn.R2DConv uses he initialization
+
+class _ConvBlock(enn.SequentialModule):
+    def __init__(self, 
+                 gspace: GSpace,
+                 in_fields: list,
+                 out_fields: list,
+                 in_dims: tuple,
+                 v_kernel_size: int,
+                 h_kernel_size: int,
+                 input_drop_rate: float,
+                 bias: bool = True,
+                 nonlinearity: bool = True,
+                 batch_norm: bool = True):
+        
+        layers = []
+        
+        conv = RBSteerableConv(gspace=gspace, 
+                               in_fields=in_fields, 
+                               out_fields=out_fields, 
+                               in_dims=in_dims,
+                               v_kernel_size=v_kernel_size, 
+                               h_kernel_size=h_kernel_size,
+                               bias=bias and not batch_norm, # bias has no effect when using batch norm
+                               v_stride=1, h_stride=1,
+                               v_pad_mode='zero', h_pad_mode='circular')
+        
+        if input_drop_rate > 0: layers.append(enn.PointwiseDropout(conv.in_type, p=input_drop_rate))
+        layers.append(conv)
+        if batch_norm: layers.append(enn.InnerBatchNorm(conv.out_type))
+        if nonlinearity: layers.append(enn.ELU(conv.out_type))
+        
+        super().__init__(*layers)
+        
+        self.in_dims, self.out_dims = in_dims, conv.out_dims
+        self.in_fields, self.out_fields = in_fields, out_fields
+        
+
+class RBAutoEncoder(enn.SequentialModule):
+    def __init__(self, 
+                 gspace: GSpace,
+                 rb_dims: tuple,
+                 encoder_channels: tuple,
+                 v_kernel_size: int = 3,
+                 h_kernel_size: int = 3,
+                 drop_rate: float = 0.2):
     
         rb_fields = [gspace.trivial_repr, gspace.irrep(1, 1), gspace.trivial_repr]
         hidden_field_type = [gspace.regular_repr]
         
-        layers = OrderedDict()
+        layers = []
+        self.out_shapes = OrderedDict()
+        self.layer_params = OrderedDict()
+        self.out_shapes['Input'] = [sum(f.size for f in rb_fields), 1, *rb_dims]
         
-        # FIRST BLOCK
-        conv = RBSteerableConv(gspace=gspace, 
-                               in_fields=rb_fields, 
-                               out_fields=hidden_channels[0]*hidden_field_type, 
-                               in_dims=rb_dims,
-                               v_kernel_size=v_kernel_size, 
-                               h_kernel_size=h_kernel_size)
-        block = enn.SequentialModule(conv,
-                                     enn.ReLU(conv.out_type),
-                                     enn.InnerBatchNorm(conv.out_type),
-                                     enn.PointwiseDropout(conv.out_type, p=drop_rate))
-        layers['Block1'] = block
-        self.in_dims = conv.in_dims
+        # Encoder
+        in_fields, in_dims = rb_fields, rb_dims
+        for i, channels in enumerate(encoder_channels, 1):
+            out_fields = channels*hidden_field_type
+            layer_drop_rate = 0 if i == 1 else drop_rate
+            
+            layers.append(_ConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
+                                    in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
+                                    input_drop_rate=layer_drop_rate, nonlinearity=True, batch_norm=True))
+            in_fields = layers[-1].out_fields
+            self.out_shapes[f'EncoderConv{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.layer_params[f'EncoderConv{i}'] = _count_params(layers[-1])
+            
+            layers.append(RBPooling(gspace=gspace, in_fields=in_fields, in_dims=in_dims,
+                                    v_kernel_size=2, h_kernel_size=2))
+            in_dims = layers[-1].out_dims
+            self.out_shapes[f'Pooling{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.layer_params[f'Pooling{i}'] = _count_params(layers[-1])
+            
+        self.latent_shape = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            
+        # Decoder
+        for i, channels in enumerate(reversed(encoder_channels), 1):
+            out_fields = channels*hidden_field_type
+            
+            layers.append(_ConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
+                                    in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
+                                    input_drop_rate=drop_rate, nonlinearity=True, batch_norm=True))
+            in_fields = layers[-1].out_fields
+            self.out_shapes[f'DecoderConv{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.layer_params[f'DecoderConv{i}'] = _count_params(layers[-1])
+            
+            layers.append(RBUpsampling(gspace=gspace, in_fields=in_fields, in_dims=in_dims,
+                                       v_scale=2, h_scale=2))
+            in_dims = layers[-1].out_dims
+            self.out_shapes[f'Upsampling{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.layer_params[f'Upsampling{i}'] = _count_params(layers[-1])
         
+        # Out Conv
+        layers.append(_ConvBlock(gspace=gspace, in_fields=in_fields, out_fields=rb_fields, 
+                                 in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
+                                 input_drop_rate=drop_rate, nonlinearity=False, batch_norm=False))
+        self.out_shapes['OutputConv'] = [sum(f.size for f in rb_fields), 1, *in_dims]
+        self.layer_params['OutputConv'] = _count_params(layers[-1])
         
-        # POOLING
-        pooling = RBMaxPool(gspace=gspace, in_fields=conv.out_fields, in_dims=conv.out_dims, v_kernel_size=v_pool_size, h_kernel_size=h_pool_size)
-        layers['Pooling'] = pooling
+        self.in_fields, self.out_fields = layers[0].in_fields, layers[-1].out_fields
+        self.in_dims, self.out_dims = tuple(layers[0].in_dims), tuple(layers[-1].out_dims)
         
+        assert self.out_dims == self.in_dims == tuple(rb_dims)
+        assert self.out_fields == self.in_fields == rb_fields
         
-        # SECOND BLOCK
-        conv = RBSteerableConv(gspace=gspace, 
-                               in_fields=pooling.out_fields, 
-                               out_fields=hidden_channels[1]*hidden_field_type, 
-                               in_dims=pooling.out_dims,
-                               v_kernel_size=v_kernel_size, 
-                               h_kernel_size=h_kernel_size)
-        block = enn.SequentialModule(conv,
-                                     enn.ReLU(conv.out_type),
-                                     enn.InnerBatchNorm(conv.out_type),
-                                     enn.PointwiseDropout(conv.out_type, p=drop_rate))
-        layers['Block2'] = block
-        
-        # UPSAMPLING
-        upsampling = RBUpsampling(gspace=gspace, in_fields=conv.out_fields, in_dims=conv.out_dims, v_scale=v_upsampling, h_scale=h_upsampling)
-        layers['Upsampling'] = upsampling
-        
-        
-        # OUTPUT LAYER
-        conv = RBSteerableConv(gspace=gspace, 
-                            in_fields=upsampling.out_fields, 
-                            out_fields=rb_fields,
-                            in_dims=upsampling.out_dims,
-                            v_kernel_size=v_kernel_size, 
-                            h_kernel_size=h_kernel_size)
-        layers['Block3'] = conv
-        self.out_dims = conv.out_dims
-        
-        
-        super().__init__(layers)
+        super().__init__(*layers)
         
         
     def forward(self, input: Tensor, data_augmentation: bool = True, on_geometric_tensor: bool = False) -> Tensor:
@@ -118,7 +159,7 @@ class RBModel(enn.SequentialModule):
         self.eval()
         
         x = torch.randn(3, self.in_type.size, *self.in_dims[:2])
-        if gpu_device: 
+        if gpu_device is not None: 
             x = x.to(gpu_device)
         x = GeometricTensor(x, self.in_type)
         
@@ -127,7 +168,7 @@ class RBModel(enn.SequentialModule):
             
             out1 = self(x, on_geometric_tensor=True).transform(el).tensor
             out2 = self(x.transform(el), on_geometric_tensor=True).tensor
-            if gpu_device:
+            if gpu_device is not None:
                 out1 = out1.cpu()
                 out2 = out2.cpu()
             out1 = out1.detach().numpy()
@@ -146,3 +187,38 @@ class RBModel(enn.SequentialModule):
         self.train(training)
         
         return errors
+    
+    def summary(self):
+        table = PrettyTable()
+        table.field_names = ["Layer", 
+                             "Output shape [c, transf., w, d, h]", 
+                             "Parameters"]
+        table.align["Layer"] = "l"
+        table.align["Output shape [c, transf., w, d, h]"] = "r"
+        table.align["Parameters"] = "r"
+        
+        layers = list(self.out_shapes.keys())
+        encoder_layers = layers[:len(layers)//2]
+        decoder_layers = layers[len(layers)//2:]
+        
+        for layer in encoder_layers:
+            params = self.layer_params[layer] if layer in self.layer_params else 0
+            table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
+            
+        table.add_row(["", "", ""])
+        
+        for layer in decoder_layers:
+            params = self.layer_params[layer] if layer in self.layer_params else 0
+            table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
+            
+        print(table)
+            
+        print(f'\nShape of latent space: {self.latent_shape}')
+        
+        print(f'\nLatent-Input-Ratio: {np.prod(self.latent_shape)/np.prod(self.out_shapes["Input"])*100:.2f}%')
+
+        print(f'\nTrainable parameters: {_count_params(self):,}')
+        
+        
+def _count_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
