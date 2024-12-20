@@ -138,6 +138,10 @@ class RBSteerableConv(enn.EquivariantModule):
         return self.r2_conv.train(*args, **kwargs)
     
     
+    def eval(self, *args, **kwargs):
+        return self.r2_conv.eval(*args, **kwargs)
+    
+    
     def check_equivariance(self, atol: float = 1e-7, rtol: float = 1e-5) -> list[tuple[Any, float]]:
         r"""
         
@@ -278,13 +282,13 @@ class RBUpsampling(enn.EquivariantModule):
         tensor = input.tensor.reshape(-1, self.in_height, sum(field.size for field in self.in_fields), *self.in_dims[:2])
         tensor = tensor.permute(0, 2, 3, 1, 4)
         
-        pooled_tensor = F.interpolate(tensor, scale_factor=[self.h_scale, self.v_scale, self.h_scale], mode='trilinear')
+        upsampled_tensor = F.interpolate(tensor, scale_factor=[self.h_scale, self.v_scale, self.h_scale], mode='trilinear')
         
-        pooled_tensor = pooled_tensor.permute(0, 3, 1, 2, 4)
-        batch, out_height, fieldsizes, out_width, out_depth = pooled_tensor.shape
-        pooled_tensor = pooled_tensor.reshape(batch, out_height*fieldsizes, out_width, out_depth)
+        upsampled_tensor = upsampled_tensor.permute(0, 3, 1, 2, 4)
+        batch, out_height, fieldsizes, out_width, out_depth = upsampled_tensor.shape
+        upsampled_tensor = upsampled_tensor.reshape(batch, out_height*fieldsizes, out_width, out_depth)
         
-        return GeometricTensor(pooled_tensor, FieldType(input.type.gspace, out_height*self.in_fields))
+        return GeometricTensor(upsampled_tensor, FieldType(input.type.gspace, out_height*self.in_fields))
     
     
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:

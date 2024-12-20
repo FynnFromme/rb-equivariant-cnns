@@ -17,7 +17,7 @@ from networks.rayleigh_benard.steerable import RBSteerableConv, RBPooling, RBUps
 
 #? info: enn.R2DConv uses he initialization
 
-class _ConvBlock(enn.SequentialModule):
+class _SteerableConvBlock(enn.SequentialModule):
     def __init__(self, 
                  gspace: GSpace,
                  in_fields: list,
@@ -53,7 +53,7 @@ class _ConvBlock(enn.SequentialModule):
         self.in_fields, self.out_fields = in_fields, out_fields
         
 
-class RBAutoEncoder(enn.SequentialModule):
+class RBSteerableAutoEncoder(enn.SequentialModule):
     def __init__(self, 
                  gspace: GSpace,
                  rb_dims: tuple,
@@ -61,8 +61,10 @@ class RBAutoEncoder(enn.SequentialModule):
                  v_kernel_size: int = 3,
                  h_kernel_size: int = 3,
                  drop_rate: float = 0.2):
-    
-        rb_fields = [gspace.trivial_repr, gspace.irrep(1, 1), gspace.trivial_repr]
+        
+        irrep_frequencies = (1, 1) if gspace.flips_order > 0 else (1,) # depending whether using Cn or Dn group
+            
+        rb_fields = [gspace.trivial_repr, gspace.irrep(*irrep_frequencies), gspace.trivial_repr]
         hidden_field_type = [gspace.regular_repr]
         
         layers = []
@@ -76,7 +78,7 @@ class RBAutoEncoder(enn.SequentialModule):
             out_fields = channels*hidden_field_type
             layer_drop_rate = 0 if i == 1 else drop_rate
             
-            layers.append(_ConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
+            layers.append(_SteerableConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
                                     in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
                                     input_drop_rate=layer_drop_rate, nonlinearity=True, batch_norm=True))
             in_fields = layers[-1].out_fields
@@ -95,7 +97,7 @@ class RBAutoEncoder(enn.SequentialModule):
         for i, channels in enumerate(reversed(encoder_channels), 1):
             out_fields = channels*hidden_field_type
             
-            layers.append(_ConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
+            layers.append(_SteerableConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
                                     in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
                                     input_drop_rate=drop_rate, nonlinearity=True, batch_norm=True))
             in_fields = layers[-1].out_fields
@@ -109,7 +111,7 @@ class RBAutoEncoder(enn.SequentialModule):
             self.layer_params[f'Upsampling{i}'] = _count_params(layers[-1])
         
         # Out Conv
-        layers.append(_ConvBlock(gspace=gspace, in_fields=in_fields, out_fields=rb_fields, 
+        layers.append(_SteerableConvBlock(gspace=gspace, in_fields=in_fields, out_fields=rb_fields, 
                                  in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
                                  input_drop_rate=drop_rate, nonlinearity=False, batch_norm=False))
         self.out_shapes['OutputConv'] = [sum(f.size for f in rb_fields), 1, *in_dims]
@@ -124,21 +126,18 @@ class RBAutoEncoder(enn.SequentialModule):
         super().__init__(*layers)
         
         
-    def forward(self, input: Tensor, data_augmentation: bool = True, on_geometric_tensor: bool = False) -> Tensor:
-        if not on_geometric_tensor:
+    def forward(self, input: Tensor | GeometricTensor) -> Tensor | GeometricTensor:
+        got_geom_tensor = isinstance(input, GeometricTensor)
+        if not got_geom_tensor:
             input = GeometricTensor(input, self.in_type)
-        
-        if data_augmentation and self.training:
-            transformation = self.in_type.gspace.fibergroup.sample()
-            input = input.transform(transformation)
             
         out = super().forward(input)
         
-        if on_geometric_tensor:
+        if got_geom_tensor:
             return out
         else:
             return out.tensor
-        
+            
         
     def check_equivariance(self, atol: float = 1e-4, rtol: float = 1e-5, gpu_device=None) -> list[tuple[Any, float]]:
         r"""
@@ -166,8 +165,8 @@ class RBAutoEncoder(enn.SequentialModule):
         errors = []
         for el in self.in_type.testing_elements:
             
-            out1 = self(x, on_geometric_tensor=True).transform(el).tensor
-            out2 = self(x.transform(el), on_geometric_tensor=True).tensor
+            out1 = self(x).transform(el).tensor
+            out2 = self(x.transform(el)).tensor
             if gpu_device is not None:
                 out1 = out1.cpu()
                 out2 = out2.cpu()
