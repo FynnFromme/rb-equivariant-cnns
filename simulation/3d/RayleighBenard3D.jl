@@ -49,7 +49,12 @@ function simulate_3d_rb(; random_inits=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, �
     ν = sqrt(Pr / Ra) # c.f. line 33: https://github.com/spectralDNS/shenfun/blob/master/demo/RayleighBenard.py
     κ = 1 / sqrt(Pr * Ra) # c.f. line 37: https://github.com/spectralDNS/shenfun/blob/master/demo/RayleighBenard.py
 
-    totalsteps = Int(div(duration, Δt_snap))
+    # simulation is done in free-flow time units
+    # t_ff = H/U_ff = H/sqrt(gαΔTH) = H/(1/H) = H^2
+    # since computation of ν,κ assumes that gαΔTH^3=1 ⇔ sqrt(gαΔTH) = 1/H
+    t_ff = L[3]^2
+
+    totalsteps = Int(div(duration, Δt_snap * t_ff))
 
     grid = define_sample_grid(N, L, use_gpu)
     u_bcs, v_bcs, b_bcs = define_boundary_conditions(min_b, Δb)
@@ -67,7 +72,7 @@ function simulate_3d_rb(; random_inits=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, �
         model = define_model(grid, ν, κ, u_bcs, v_bcs, b_bcs)
         initialize_model(model, min_b, L[3], Δb, random_kick)
         
-        simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
+        simulate_model(model, dataset, Δt, t_ff, Δt_snap, totalsteps, N)
 
         if visualize
             animation_dir = joinpath(dirpath, "data", simulation_name, "sim$(sim_num)", "animations")
@@ -163,8 +168,8 @@ function create_hdf5_dataset(simulation_name, N, totalsteps)
 end
 
 
-function simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
-    simulation = Simulation(model, Δt=Δt, stop_time=Δt_snap)
+function simulate_model(model, dataset, Δt, t_ff, Δt_snap, totalsteps, N)
+    simulation = Simulation(model, Δt=Δt, stop_time=Δt_snap*t_ff)
     simulation.verbose = true
 
     cur_time = 0.0
@@ -173,11 +178,11 @@ function simulate_model(model, dataset, Δt, Δt_snap, totalsteps, N)
     save_simulation_step(model, dataset, 1, N)
 
     for i in 1:totalsteps
-        #update the simulation stop time for the next step
-        global simulation.stop_time = Δt_snap * i
+        #update the simulation stop time for the next step (in free fall time units)
+        global simulation.stop_time = Δt_snap*t_ff * i
 
         run!(simulation)
-        cur_time += Δt_snap
+        cur_time += Δt_snap*t_ff
 
         save_simulation_step(model, dataset, i + 1, N)
 
