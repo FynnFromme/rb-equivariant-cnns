@@ -28,7 +28,7 @@ N = (48, 48, 32)
 
 # time
 Δt = 0.01 # simulation delta
-Δt_snap = 0.3 # save delta
+Δt_snap = 0.125 # save delta
 duration = 300 # duration of simulation
 
 # temperature

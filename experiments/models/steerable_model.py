@@ -58,6 +58,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                  gspace: GSpace,
                  rb_dims: tuple,
                  encoder_channels: tuple,
+                 latent_channels: int,
                  v_kernel_size: int = 3,
                  h_kernel_size: int = 3,
                  drop_rate: float = 0.2):
@@ -74,40 +75,49 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
         
         # Encoder
         in_fields, in_dims = rb_fields, rb_dims
-        for i, channels in enumerate(encoder_channels, 1):
-            out_fields = channels*hidden_field_type
+        for i, out_channnels in enumerate(encoder_channels, 1):
+            out_fields = out_channnels*hidden_field_type
             layer_drop_rate = 0 if i == 1 else drop_rate
             
             layers.append(_SteerableConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
                                     in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
                                     input_drop_rate=layer_drop_rate, nonlinearity=True, batch_norm=True))
             in_fields = layers[-1].out_fields
-            self.out_shapes[f'EncoderConv{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.out_shapes[f'EncoderConv{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
             self.layer_params[f'EncoderConv{i}'] = _count_params(layers[-1])
             
             layers.append(RBPooling(gspace=gspace, in_fields=in_fields, in_dims=in_dims,
                                     v_kernel_size=2, h_kernel_size=2))
             in_dims = layers[-1].out_dims
-            self.out_shapes[f'Pooling{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.out_shapes[f'Pooling{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
             self.layer_params[f'Pooling{i}'] = _count_params(layers[-1])
             
-        self.latent_shape = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+        # Latent Space
+        out_fields = latent_channels*hidden_field_type
+        layers.append(_SteerableConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
+                                          in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
+                                          input_drop_rate=drop_rate, nonlinearity=True, batch_norm=True))
+        in_fields = layers[-1].out_fields
+        self.out_shapes[f'LatentConv'] = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
+        self.layer_params[f'LatentConv'] = _count_params(layers[-1])
+            
+        self.latent_shape = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
             
         # Decoder
-        for i, channels in enumerate(reversed(encoder_channels), 1):
-            out_fields = channels*hidden_field_type
+        for i, out_channnels in enumerate(reversed(encoder_channels), 1):
+            out_fields = out_channnels*hidden_field_type
             
             layers.append(_SteerableConvBlock(gspace=gspace, in_fields=in_fields, out_fields=out_fields, 
                                     in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
                                     input_drop_rate=drop_rate, nonlinearity=True, batch_norm=True))
             in_fields = layers[-1].out_fields
-            self.out_shapes[f'DecoderConv{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.out_shapes[f'DecoderConv{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
             self.layer_params[f'DecoderConv{i}'] = _count_params(layers[-1])
             
             layers.append(RBUpsampling(gspace=gspace, in_fields=in_fields, in_dims=in_dims,
                                        v_scale=2, h_scale=2))
             in_dims = layers[-1].out_dims
-            self.out_shapes[f'Upsampling{i}'] = [channels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.out_shapes[f'Upsampling{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
             self.layer_params[f'Upsampling{i}'] = _count_params(layers[-1])
         
         # Out Conv
@@ -190,23 +200,13 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
     def summary(self):
         table = PrettyTable()
         table.field_names = ["Layer", 
-                             "Output shape [c, transf., w, d, h]", 
+                             "Output shape [c, |G|, w, d, h]", 
                              "Parameters"]
         table.align["Layer"] = "l"
-        table.align["Output shape [c, transf., w, d, h]"] = "r"
+        table.align["Output shape [c, |G|, w, d, h]"] = "r"
         table.align["Parameters"] = "r"
         
-        layers = list(self.out_shapes.keys())
-        encoder_layers = layers[:len(layers)//2]
-        decoder_layers = layers[len(layers)//2:]
-        
-        for layer in encoder_layers:
-            params = self.layer_params[layer] if layer in self.layer_params else 0
-            table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
-            
-        table.add_row(["", "", ""])
-        
-        for layer in decoder_layers:
+        for layer in self.out_shapes.keys():
             params = self.layer_params[layer] if layer in self.layer_params else 0
             table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
             

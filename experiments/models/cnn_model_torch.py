@@ -48,6 +48,7 @@ class RBAutoEncoder(nn.Sequential):
     def __init__(self, 
                  rb_dims: tuple,
                  encoder_channels: tuple,
+                 latent_channels: int,
                  v_kernel_size: int = 3,
                  h_kernel_size: int = 3,
                  drop_rate: float = 0.2):
@@ -68,12 +69,20 @@ class RBAutoEncoder(nn.Sequential):
             self.out_shapes[f'EncoderConv{i}'] = [out_channels, *in_dims]
             self.layer_params[f'EncoderConv{i}'] = _count_params(layers[-1])
             
-            layers.append(RBPooling(in_channels=in_channels, in_dims=in_dims,v_kernel_size=2, h_kernel_size=2))
+            layers.append(RBPooling(in_channels=in_channels, in_dims=in_dims, v_kernel_size=2, h_kernel_size=2))
             in_dims = layers[-1].out_dims
             self.out_shapes[f'Pooling{i}'] = [out_channels, *in_dims]
             self.layer_params[f'Pooling{i}'] = _count_params(layers[-1])
-            
-        self.latent_shape = [out_channels, *in_dims]
+           
+        # Latent Space
+        layers.append(_ConvBlock(in_channels=in_channels, out_channels=latent_channels, 
+                                 in_dims=in_dims, v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
+                                 input_drop_rate=drop_rate, nonlinearity=True, batch_norm=True))
+        in_channels = layers[-1].out_channels
+        self.out_shapes[f'LatentConv'] = [latent_channels, *in_dims]
+        self.layer_params[f'LatentConv'] = _count_params(layers[-1])
+        
+        self.latent_shape = [latent_channels, *in_dims]
             
         # Decoder
         for i, out_channels in enumerate(reversed(encoder_channels), 1):            
@@ -106,23 +115,13 @@ class RBAutoEncoder(nn.Sequential):
     def summary(self):
         table = PrettyTable()
         table.field_names = ["Layer", 
-                             "Output shape [c, transf., w, d, h]", 
+                             "Output shape [c, |G|, w, d, h]", 
                              "Parameters"]
         table.align["Layer"] = "l"
-        table.align["Output shape [c, transf., w, d, h]"] = "r"
+        table.align["Output shape [c, |G|, w, d, h]"] = "r"
         table.align["Parameters"] = "r"
         
-        layers = list(self.out_shapes.keys())
-        encoder_layers = layers[:len(layers)//2]
-        decoder_layers = layers[len(layers)//2:]
-        
-        for layer in encoder_layers:
-            params = self.layer_params[layer] if layer in self.layer_params else 0
-            table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
-            
-        table.add_row(["", "", ""])
-        
-        for layer in decoder_layers:
+        for layer in self.out_shapes.keys():
             params = self.layer_params[layer] if layer in self.layer_params else 0
             table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
             
