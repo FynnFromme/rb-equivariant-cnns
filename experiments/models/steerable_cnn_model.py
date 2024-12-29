@@ -12,8 +12,7 @@ from escnn.nn import GeometricTensor
 from escnn.group import Representation
 from escnn.gspaces import GSpace
 
-from networks.rayleigh_benard.steerable import RBSteerableConv, RBPooling, RBUpsampling
-
+from networks.steerable_cnn import RBSteerableConv, RBPooling, RBUpsampling
 
 
 class _SteerableConvBlock(enn.SequentialModule):

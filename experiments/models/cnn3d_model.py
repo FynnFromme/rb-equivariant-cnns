@@ -7,7 +7,7 @@ from collections import OrderedDict
 from typing import Callable
 from prettytable import PrettyTable
 
-from networks.rayleigh_benard.cnn3d_torch import RB3DConv, RBPooling, RBUpsampling
+from networks.cnn3d import RB3DConv, RBPooling, RBUpsampling
 
 
 class _Conv3DBlock(nn.Sequential):
