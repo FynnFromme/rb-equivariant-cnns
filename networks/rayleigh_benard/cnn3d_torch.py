@@ -1,11 +1,9 @@
 from torch import Tensor
 from torch import nn
-
-from typing import Literal
-
 from torch.nn import functional as F
 
 import utils
+from typing import Literal
 
 
 class RB3DConv(nn.Module):

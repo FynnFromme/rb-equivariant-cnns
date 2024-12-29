@@ -1,16 +1,14 @@
-import torch
 import numpy as np
-
-from typing import Literal, Callable, Any
+import torch
+from torch.nn import functional as F
 
 from escnn import nn as enn
 from escnn.nn import FieldType, GeometricTensor
 from escnn.gspaces import GSpace
 from escnn.group import Representation
 
-from torch.nn import functional as F
-
 import utils
+from typing import Literal, Callable, Any
 
 
 class RBSteerableConv(enn.EquivariantModule):
