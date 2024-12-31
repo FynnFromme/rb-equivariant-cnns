@@ -2,7 +2,7 @@ import numpy as np
 from torch import nn
 from torch import Tensor
 
-import utils
+import experiments.models.model_utils as model_utils
 from collections import OrderedDict
 from typing import Callable
 from prettytable import PrettyTable
@@ -84,6 +84,9 @@ class RB3DAutoEncoder(nn.Sequential):
             nonlinearity (Callable, optional): The nonlinearity applied to the conv output. Set to `None` to
                 have no nonlinearity. Defaults to enn.ELU.
         """
+        
+        super().__init__()
+        
         encoder_layers = []
         decoder_layers = []
         self.out_shapes = OrderedDict()
@@ -107,7 +110,7 @@ class RB3DAutoEncoder(nn.Sequential):
                                                batch_norm=True))
             in_channels = encoder_layers[-1].out_channels
             self.out_shapes[f'EncoderConv{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'EncoderConv{i}'] = utils.count_trainable_params(encoder_layers[-1])
+            self.layer_params[f'EncoderConv{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
             encoder_layers.append(RBPooling(in_channels=in_channels, 
                                             in_dims=in_dims, 
@@ -115,7 +118,7 @@ class RB3DAutoEncoder(nn.Sequential):
                                             h_kernel_size=2))
             in_dims = encoder_layers[-1].out_dims
             self.out_shapes[f'Pooling{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'Pooling{i}'] = utils.count_trainable_params(encoder_layers[-1])
+            self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
         ######################
         #### Latent Space ####
@@ -130,7 +133,7 @@ class RB3DAutoEncoder(nn.Sequential):
                                            batch_norm=True))
         in_channels = encoder_layers[-1].out_channels
         self.out_shapes[f'LatentConv'] = [latent_channels, *in_dims]
-        self.layer_params[f'LatentConv'] = utils.count_trainable_params(encoder_layers[-1])
+        self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
         self.latent_shape = [latent_channels, *in_dims]
             
         #####################
@@ -147,12 +150,12 @@ class RB3DAutoEncoder(nn.Sequential):
                                                batch_norm=True))
             in_channels = decoder_layers[-1].out_channels
             self.out_shapes[f'DecoderConv{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'DecoderConv{i}'] = utils.count_trainable_params(decoder_layers[-1])
+            self.layer_params[f'DecoderConv{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
             
             decoder_layers.append(RBUpsampling(in_channels=in_channels, in_dims=in_dims, v_scale=2, h_scale=2))
             in_dims = decoder_layers[-1].out_dims
             self.out_shapes[f'Upsampling{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'Upsampling{i}'] = utils.count_trainable_params(decoder_layers[-1])
+            self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
         
         ######################
         ####    Output    ####
@@ -166,16 +169,26 @@ class RB3DAutoEncoder(nn.Sequential):
                                            nonlinearity=None, 
                                            batch_norm=False))
         self.out_shapes['OutputConv'] = [4, *in_dims]
-        self.layer_params['OutputConv'] = utils.count_trainable_params(decoder_layers[-1])
+        self.layer_params['OutputConv'] = model_utils.count_trainable_params(decoder_layers[-1])
         
-        self.in_dims, self.out_dims = tuple(decoder_layers[0].in_dims), tuple(decoder_layers[-1].out_dims)
+        self.in_dims, self.out_dims = tuple(encoder_layers[0].in_dims), tuple(decoder_layers[-1].out_dims)
         
         assert self.out_dims == self.in_dims == tuple(rb_dims)
         
-        super().__init__(*encoder_layers, *decoder_layers)
-        
         self.encoder = nn.Sequential(*encoder_layers)
         self.decoder = nn.Sequential(*decoder_layers)
+        
+    
+    def train(self, *args, **kwargs):
+        """Sets module to training mode."""
+        self.encoder.train(*args, **kwargs)
+        self.decoder.train(*args, **kwargs)
+    
+    
+    def eval(self, *args, **kwargs):
+        """Sets module to evaluation mode."""
+        self.encoder.eval(*args, **kwargs)
+        self.decoder.eval(*args, **kwargs)
         
         
     def forward(self, input: Tensor) -> Tensor:
@@ -190,7 +203,8 @@ class RB3DAutoEncoder(nn.Sequential):
         # transform to [batch, channels, width, depth, height]
         input = input.reshape(-1, self.in_dims[-1], 4, *self.in_dims[:2]).permute(0, 2, 3, 4, 1)
         
-        output = super().forward(input)
+        latent = self.encoder(input)
+        output = self.decoder(latent)
         
         # transform back to [batch, height*channels, width, depth]
         return output.permute(0, 4, 1, 2, 3).reshape(-1, self.out_dims[-1]*4, *self.out_dims[:2])
@@ -234,22 +248,4 @@ class RB3DAutoEncoder(nn.Sequential):
           
     def summary(self):
         """Print summary of the model."""
-        table = PrettyTable()
-        table.field_names = ["Layer", 
-                             "Output shape [c, |G|, w, d, h]", 
-                             "Parameters"]
-        table.align["Layer"] = "l"
-        table.align["Output shape [c, |G|, w, d, h]"] = "r"
-        table.align["Parameters"] = "r"
-        
-        for layer in self.out_shapes.keys():
-            params = self.layer_params[layer] if layer in self.layer_params else 0
-            table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
-            
-        print(table)
-            
-        print(f'\nShape of latent space: {self.latent_shape}')
-        
-        print(f'\nLatent-Input-Ratio: {np.prod(self.latent_shape)/np.prod(self.out_shapes["Input"])*100:.2f}%')
-
-        print(f'\nTrainable parameters: {utils.count_trainable_params(self):,}')
+        model_utils.summary(self, self.out_shapes, self.layer_params, self.latent_shape)

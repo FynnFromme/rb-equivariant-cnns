@@ -1,7 +1,6 @@
-import utils
+import experiments.models.model_utils as model_utils
 from typing import Any, Callable
 from collections import OrderedDict
-from prettytable import PrettyTable
 
 import numpy as np
 import torch
@@ -73,7 +72,7 @@ class _SteerableConvBlock(enn.SequentialModule):
         self.in_fields, self.out_fields = in_fields, out_fields
         
 
-class RBSteerableAutoEncoder(enn.SequentialModule):
+class RBSteerableAutoEncoder(enn.EquivariantModule):
     def __init__(self, 
                  gspace: GSpace,
                  rb_dims: tuple,
@@ -100,6 +99,8 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
             nonlinearity (Callable, optional): The nonlinearity applied to the conv output. Set to `None` to
                 have no nonlinearity. Defaults to enn.ELU.
         """
+        
+        super().__init__()
         
         irrep_frequencies = (1, 1) if gspace.flips_order > 0 else (1,) # depending whether using Cn or Dn group
             
@@ -131,7 +132,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                                                       batch_norm=True))
             in_fields = encoder_layers[-1].out_fields
             self.out_shapes[f'EncoderConv{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'EncoderConv{i}'] = utils.count_trainable_params(encoder_layers[-1])
+            self.layer_params[f'EncoderConv{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
             encoder_layers.append(RBPooling(gspace=gspace, 
                                             in_fields=in_fields, 
@@ -140,7 +141,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                                             h_kernel_size=2))
             in_dims = encoder_layers[-1].out_dims
             self.out_shapes[f'Pooling{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'Pooling{i}'] = utils.count_trainable_params(encoder_layers[-1])
+            self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
         ######################
         #### Latent Space ####
@@ -157,7 +158,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                                                   batch_norm=True))
         in_fields = encoder_layers[-1].out_fields
         self.out_shapes[f'LatentConv'] = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
-        self.layer_params[f'LatentConv'] = utils.count_trainable_params(encoder_layers[-1])
+        self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
             
         self.latent_shape = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
             
@@ -178,7 +179,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                                                       batch_norm=True))
             in_fields = decoder_layers[-1].out_fields
             self.out_shapes[f'DecoderConv{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'DecoderConv{i}'] = utils.count_trainable_params(decoder_layers[-1])
+            self.layer_params[f'DecoderConv{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
             
             decoder_layers.append(RBUpsampling(gspace=gspace, 
                                                in_fields=in_fields, 
@@ -187,7 +188,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                                                h_scale=2))
             in_dims = decoder_layers[-1].out_dims
             self.out_shapes[f'Upsampling{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'Upsampling{i}'] = utils.count_trainable_params(decoder_layers[-1])
+            self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
         
         ######################
         ####    Output    ####
@@ -202,18 +203,29 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
                                                   nonlinearity=None, 
                                                   batch_norm=False))
         self.out_shapes['OutputConv'] = [sum(f.size for f in rb_fields), 1, *in_dims]
-        self.layer_params['OutputConv'] = utils.count_trainable_params(decoder_layers[-1])
+        self.layer_params['OutputConv'] = model_utils.count_trainable_params(decoder_layers[-1])
         
-        self.in_fields, self.out_fields = decoder_layers[0].in_fields, decoder_layers[-1].out_fields
-        self.in_dims, self.out_dims = tuple(decoder_layers[0].in_dims), tuple(decoder_layers[-1].out_dims)
+        self.in_type, self.out_type = encoder_layers[0].in_type, decoder_layers[-1].out_type
+        self.in_fields, self.out_fields = encoder_layers[0].in_fields, decoder_layers[-1].out_fields
+        self.in_dims, self.out_dims = tuple(encoder_layers[0].in_dims), tuple(decoder_layers[-1].out_dims)
         
         assert self.out_dims == self.in_dims == tuple(rb_dims)
         assert self.out_fields == self.in_fields == rb_fields
         
-        super().__init__(*encoder_layers, *decoder_layers)
-        
         self.encoder = enn.SequentialModule(*encoder_layers)
         self.decoder = enn.SequentialModule(*decoder_layers)
+        
+    
+    def train(self, *args, **kwargs):
+        """Sets module to training mode."""
+        self.encoder.train(*args, **kwargs)
+        self.decoder.train(*args, **kwargs)
+    
+    
+    def eval(self, *args, **kwargs):
+        """Sets module to evaluation mode."""
+        self.encoder.eval(*args, **kwargs)
+        self.decoder.eval(*args, **kwargs)
     
         
     def forward(self, input: Tensor | GeometricTensor) -> Tensor | GeometricTensor:
@@ -231,9 +243,10 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
         if not got_geom_tensor:
             input = GeometricTensor(input, self.in_type)
             
-        out = super().forward(input)
+        latent = self.encoder.forward(input)
+        output = self.decoder.forward(latent)
         
-        return out if got_geom_tensor else out.tensor
+        return output if got_geom_tensor else output.tensor
         
         
     def encode(self, input: Tensor | GeometricTensor) -> Tensor | GeometricTensor:
@@ -251,7 +264,7 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
         if not got_geom_tensor:
             input = GeometricTensor(input, self.in_type)
             
-        latent = self.encoder(input)
+        latent = self.encoder.forward(input)
         
         return latent if got_geom_tensor else latent.tensor
     
@@ -271,9 +284,22 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
         if not got_geom_tensor:
             latent = GeometricTensor(latent, self.decoder.in_type)
             
-        out = self.decoder(latent)
+        output = self.decoder.forward(latent)
         
-        return out if got_geom_tensor else out.tensor
+        return output if got_geom_tensor else output.tensor
+    
+    def evaluate_output_shape(self, input_shape: tuple) -> tuple:
+        """Compute the shape the output tensor which would be generated by this module when a tensor with shape
+        ``input_shape`` is provided as input.
+        
+        Args:
+            input_shape (tuple): shape of the input tensor
+
+        Returns:
+            shape of the output tensor
+            
+        """
+        return input_shape
             
         
     def check_equivariance(self, atol: float = 1e-4, rtol: float = 1e-5, gpu_device=None) -> list[tuple[Any, float]]:
@@ -319,22 +345,4 @@ class RBSteerableAutoEncoder(enn.SequentialModule):
     
     def summary(self):
         """Print summary of the model."""
-        table = PrettyTable()
-        table.field_names = ['Layer', 
-                             'Output shape [c, |G|, w, d, h]', 
-                             'Parameters']
-        table.align['Layer'] = 'l'
-        table.align['Output shape [c, |G|, w, d, h]'] = 'r'
-        table.align['Parameters'] = 'r'
-        
-        for layer in self.out_shapes.keys():
-            params = self.layer_params[layer] if layer in self.layer_params else 0
-            table.add_row([layer, self.out_shapes[layer], f'{params:,}'])
-            
-        print(table)
-            
-        print(f'\nShape of latent space: {self.latent_shape}')
-        
-        print(f'\nLatent-Input-Ratio: {np.prod(self.latent_shape)/np.prod(self.out_shapes['Input'])*100:.2f}%')
-
-        print(f'\nTrainable parameters: {utils.count_trainable_params(self):,}')
+        model_utils.summary(self, self.out_shapes, self.layer_params, self.latent_shape)

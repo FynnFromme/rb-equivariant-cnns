@@ -2,7 +2,7 @@ from torch import Tensor
 from torch import nn
 from torch.nn import functional as F
 
-import utils
+from networks import network_utils
 from typing import Literal
 
 
@@ -52,10 +52,10 @@ class RBConv(nn.Module):
             h_pad_mode = 'zeros'
         else:
             # Conv2D only allows for the same amount of padding on both sides
-            h_padding = [utils.required_same_padding(in_dims[i], h_kernel_size, h_stride, h_dilation, split=True)[1] 
+            h_padding = [network_utils.required_same_padding(in_dims[i], h_kernel_size, h_stride, h_dilation, split=True)[1] 
                          for i in [0, 1]]
         
-        out_height = utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
+        out_height = network_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
                                             dilation=1, pad=v_pad_mode!='valid')
         
         # under the hood, this layer works by stacking the vertical neighborhoods of the input and then
@@ -85,7 +85,7 @@ class RBConv(nn.Module):
         self.out_height = out_height
         
         self.in_dims = in_dims
-        self.out_dims = [utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
+        self.out_dims = [network_utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
                                                 pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
@@ -123,7 +123,7 @@ class RBConv(nn.Module):
 
         if self.v_pad:
             # pad height
-            padding = utils.required_same_padding(self.in_height, self.v_kernel_size, 
+            padding = network_utils.required_same_padding(self.in_height, self.v_kernel_size, 
                                                   self.v_stride, dilation=1, split=True)
             tensor = F.pad(tensor, (*([0,0]*3), *padding)) # shape (b,padH,c,w,d)
         

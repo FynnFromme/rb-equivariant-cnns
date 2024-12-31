@@ -7,7 +7,7 @@ from escnn.nn import FieldType, GeometricTensor
 from escnn.gspaces import GSpace
 from escnn.group import Representation
 
-import utils
+from networks import network_utils
 from typing import Literal, Callable, Any
 
 
@@ -86,10 +86,10 @@ class RBSteerableConv(enn.EquivariantModule):
             h_pad_mode = 'zero'
         else:
             # enn.R2Conv only allows for the same amount of padding on both sides
-            h_padding = [utils.required_same_padding(in_dims[i], h_kernel_size, h_stride, h_dilation, split=True)[1] 
+            h_padding = [network_utils.required_same_padding(in_dims[i], h_kernel_size, h_stride, h_dilation, split=True)[1] 
                          for i in [0, 1]]
         
-        out_height = utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
+        out_height = network_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
                                             dilation=1, pad=v_pad_mode!='valid')
         
         # under the hood, this layer works by stacking the vertical neighborhoods of the input and then
@@ -127,7 +127,7 @@ class RBSteerableConv(enn.EquivariantModule):
         self.out_type = out_type
         
         self.in_dims = in_dims
-        self.out_dims = [utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
+        self.out_dims = [network_utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
                                                 pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
@@ -171,7 +171,7 @@ class RBSteerableConv(enn.EquivariantModule):
 
         if self.v_pad:
             # pad height
-            padding = utils.required_same_padding(self.in_height, self.v_kernel_size, 
+            padding = network_utils.required_same_padding(self.in_height, self.v_kernel_size, 
                                                   self.v_stride, dilation=1, split=True)
             tensor = F.pad(tensor, (*([0,0]*3), *padding)) # shape (b,padH,fields,w,d)
         
