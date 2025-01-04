@@ -27,8 +27,8 @@ L = (2*pi, 2*pi, 2) # x,y,z
 N = (48, 48, 32)
 
 # time
-Δt = 0.01 # simulation delta
-Δt_snap = 0.125 # save delta
+Δt = 0.01 # simulation delta (in free fall time units)
+Δt_snap = 0.125 # save delta (in free fall time units, following Schumacher et al)
 duration = 300 # duration of simulation
 
 # temperature
@@ -36,12 +36,11 @@ min_b = 0 # Temperature at top plate
 Δb = 1 # Temperature difference between bottom and top plate
 
 # Rayleigh Benard Parameters
-Ra = 10^4
+Ra = 2500
 Pr = 0.7
 
 # Set the amplitude of the random initial perturbation (kick)
 random_kick = 0.2
-
 
 function simulate_3d_rb(; random_inits=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, Δb=Δb, random_kick=random_kick,
     Δt=Δt, Δt_snap=Δt_snap, duration=duration, use_gpu=use_gpu, visualize=visualize, fps=fps)
@@ -62,7 +61,7 @@ function simulate_3d_rb(; random_inits=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, �
     for i ∈ 1:random_inits
         println("Simulating random initialization $(i)/$(random_inits)...")
 
-        simulation_name = "$(N[1])_$(N[2])_$(N[3])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+        simulation_name = "x$(N[1])_y$(N[2])_z$(N[3])_Ra$(Ra)_Pr$(Pr)_t$(Δt)_snap$(Δt_snap)_dur$(duration)"
         h5_file, dataset, h5_file_path, sim_num = create_hdf5_dataset(simulation_name, N, totalsteps)
 
         # Make sure that every random initialization is indeed independend of each other
@@ -72,7 +71,11 @@ function simulate_3d_rb(; random_inits=1, Ra=Ra, Pr=Pr, N=N, L=L, min_b=min_b, �
         model = define_model(grid, ν, κ, u_bcs, v_bcs, b_bcs)
         initialize_model(model, min_b, L[3], Δb, random_kick)
         
-        simulate_model(model, dataset, Δt, t_ff, Δt_snap, totalsteps, N)
+        success = simulate_model(model, dataset, Δt, t_ff, Δt_snap, totalsteps, N)
+
+        if (!success)
+            return
+        end
 
         if visualize
             animation_dir = joinpath(dirpath, "data", simulation_name, "sim$(sim_num)", "animations")
@@ -169,7 +172,7 @@ end
 
 
 function simulate_model(model, dataset, Δt, t_ff, Δt_snap, totalsteps, N)
-    simulation = Simulation(model, Δt=Δt, stop_time=Δt_snap*t_ff)
+    simulation = Simulation(model, Δt=Δt*t_ff, stop_time=Δt_snap * t_ff)
     simulation.verbose = true
 
     cur_time = 0.0
@@ -188,11 +191,13 @@ function simulate_model(model, dataset, Δt, t_ff, Δt_snap, totalsteps, N)
 
         if (step_contains_NaNs(model, N))
             printstyled("[ERROR] NaN values found!\n"; color=:red)
-            return
+            return false
         end
 
         println(cur_time)
     end
+
+    return true
 end
 
 

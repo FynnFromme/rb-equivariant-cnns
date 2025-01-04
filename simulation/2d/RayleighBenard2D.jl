@@ -57,7 +57,7 @@ function simulate_2d_rb(; random_initializations=1, Ra=Ra, Pr=Pr, N=N, L=L, min_
     for i ∈ 1:random_initializations
         println("Simulating random initialization $(i)/$(random_initializations)...")
 
-        simulation_name = "$(N[1])_$(N[2])_$(Ra)_$(Pr)_$(Δt)_$(Δt_snap)_$(duration)"
+        simulation_name = "x$(N[1])_z$(N[2])_Ra$(Ra)_Pr$(Pr)_t$(Δt)_snap$(Δt_snap)_dur$(duration)"
         h5_file, dataset, h5_file_path, sim_num = create_hdf5_dataset(simulation_name, N, totalsteps)
 
         # Make sure that every random initialization is indeed independend of each other

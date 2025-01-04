@@ -408,4 +408,4 @@ if __name__ == '__main__':
                 first_snapshot=200,
                 step=1) # every shapshot
     
-    prep.prepare_data('48_48_32_2500_0.7_0.01_0.3_300')
+    prep.prepare_data('x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
