@@ -1,3 +1,5 @@
+# based on https://github.com/aschnelle-dev/equivariant-SR-turbulent-flows
+
 from tqdm.auto import tqdm
 
 import math
@@ -17,10 +19,24 @@ from torch.utils.tensorboard import SummaryWriter
 from .data_augmentation import DataAugmentation
 
 
-def train(model: torch.nn.Module, models_dir: str, model_name: str, start_epoch: int, epochs: int, 
-          train_loader: DataLoader, valid_loader: DataLoader, loss_fn, optimizer, lr_scheduler, 
-          use_lr_scheduler: bool, early_stopping: int, only_save_best: bool, train_samples: int, batch_size: int,
-          data_augmentation: DataAugmentation, plot: bool, initial_early_stop_count: int = 0):
+def train(model: torch.nn.Module, 
+          models_dir: str, 
+          model_name: str, 
+          start_epoch: int, 
+          epochs: int, 
+          train_loader: DataLoader, 
+          valid_loader: DataLoader, 
+          loss_fn, 
+          optimizer, 
+          lr_scheduler, 
+          use_lr_scheduler: bool, 
+          early_stopping: int, 
+          only_save_best: bool, 
+          train_samples: int, 
+          batch_size: int,
+          data_augmentation: DataAugmentation, 
+          plot: bool,
+          initial_early_stop_count: int = 0):
 
     writer = SummaryWriter(f"runs/{model_name}") # Tensorboard writer
 
@@ -55,7 +71,7 @@ def train(model: torch.nn.Module, models_dir: str, model_name: str, start_epoch:
                 best_epoch = epoch
                 best_weights = deepcopy(model.state_dict())
                 best_optim = optimizer.state_dict()
-                pbar.set_postfix_str(f'{best_epoch=:}, {train_loss=:.4f}, {best_loss=:.4f}')
+                pbar.set_postfix_str(f'{best_epoch=:}, {train_loss=:.4f}, {valid_loss=:.4f}')
                 
                 if only_save_best:
                     remove_saved_models(output_dir)
@@ -85,9 +101,16 @@ def train(model: torch.nn.Module, models_dir: str, model_name: str, start_epoch:
         plt.show()
     
 
-def train_epoch(train_loader: DataLoader, valid_loader: DataLoader, model, loss_fn, optimizer, 
-                data_augmentation, epochnum, batch_size, samples):
-    model.train() # Sets the model to training mode -- important for batch normalization and dropout layers
+def train_epoch(train_loader: DataLoader, 
+                valid_loader: DataLoader, 
+                model: torch.nn.Module,
+                loss_fn, 
+                optimizer, 
+                data_augmentation: DataAugmentation, 
+                epochnum: int, 
+                batch_size: int, 
+                samples: int):
+    model.train()
     running_loss = 0.0
     
     with tqdm(total=math.ceil(samples/batch_size), desc=f'epoch {epochnum}', unit='batch') as pbar:
@@ -116,8 +139,8 @@ def train_epoch(train_loader: DataLoader, valid_loader: DataLoader, model, loss_
     return train_loss, valid_loss
 
 
-def compute_validation_loss(dataloader: DataLoader, model, loss_fn):
-    model.eval() # Sets the model to evaluation mode -- important for batch normalization and dropout layers
+def compute_validation_loss(dataloader: DataLoader, model: torch.nn.Module, loss_fn):
+    model.eval()
     valid_loss = 0.0
     with torch.no_grad(): # Ensures that no gradients are computed during test mode
         for i, (x, y) in enumerate(dataloader, 1):

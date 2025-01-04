@@ -246,6 +246,21 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         
         return self._to_output_shape(output)
     
+    def forward_geometric(self, input: GeometricTensor) -> GeometricTensor:
+        """Forwards the input through the network and returns the output. This method works with
+        the GeometricTensor, which is internally used.
+
+        Args:
+            input (GeometricTensor): The networks input of shape [batch, height*channels, width, depth]
+
+        Returns:
+            GeometricTensor: The decoded output of shape [batch, height*channels, width, depth]
+        """
+        latent = self.encoder(input)
+        output = self.decoder(latent)
+        
+        return output
+    
     
     def encode(self, input: Tensor) -> Tensor:
         """Forwards the input through the encoder part and returns the latent representation.
@@ -366,15 +381,20 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         training = self.training
         self.eval()
         
-        x = torch.randn(3, self.in_type.size, *self.in_dims[:2])
+        x = torch.randn(3, *self.in_dims, 4)
+        x = self._from_input_shape(x)
         if gpu_device is not None: 
             x = x.to(gpu_device)
         x = GeometricTensor(x, self.in_type)
         
         errors = []
         for el in self.in_type.testing_elements:
-            out1 = self(x).transform(el).tensor
-            out2 = self(x.transform(el)).tensor
+            out1 = self.forward_geometric(x).transform(el).tensor
+            out2 = self.forward_geometric(x.transform(el)).tensor
+            
+            out1 = self._to_output_shape(out1)
+            out2 = self._to_output_shape(out2)
+            
             if gpu_device is not None:
                 out1 = out1.cpu()
                 out2 = out2.cpu()

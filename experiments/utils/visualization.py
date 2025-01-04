@@ -41,11 +41,6 @@ def auto_encoder_animation(model: torch.nn.Module,
                            dataset='test', 
                            batch_size=32,
                            frames=np.inf):
-    """Animates the output of a AE next to the input across a 2D slice.
-
-    Args:
-        axis: 0, 1, 2 for slices across the width, depth or height axis respectively
-    """
     channel = ['t', 'u', 'v', 'w'].index(feature)
     
     data_reader = DataReader(sim_file, dataset, device, shuffle=False)
