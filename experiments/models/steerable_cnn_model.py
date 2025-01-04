@@ -72,7 +72,7 @@ class _SteerableConvBlock(enn.SequentialModule):
         self.in_fields, self.out_fields = in_fields, out_fields
         
 
-class RBSteerableAutoEncoder(enn.EquivariantModule):
+class RBSteerableAutoencoder(enn.EquivariantModule):
     def __init__(self, 
                  gspace: GSpace,
                  rb_dims: tuple,

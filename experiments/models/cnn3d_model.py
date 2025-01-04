@@ -61,7 +61,7 @@ class _Conv3DBlock(nn.Sequential):
         self.in_channels, self.out_channels = in_channels, out_channels
         
 
-class RB3DAutoEncoder(nn.Sequential):
+class RB3DAutoencoder(nn.Sequential):
     def __init__(self, 
                  rb_dims: tuple,
                  encoder_channels: tuple,

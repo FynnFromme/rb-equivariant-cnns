@@ -60,7 +60,7 @@ class _ConvBlock(nn.Sequential):
         self.in_channels, self.out_channels = in_channels, out_channels
         
 
-class RBAutoEncoder(nn.Module):
+class RBAutoencoder(nn.Module):
     def __init__(self, 
                  rb_dims: tuple,
                  encoder_channels: tuple,
