@@ -191,40 +191,107 @@ class RBAutoencoder(nn.Module):
         """Forwards the input through the network and returns the output.
 
         Args:
-            input (Tensor): The networks input of shape [batch, height*channels, width, depth]
+            input (Tensor): The networks input of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor: The decoded output of shape [batch, height*channels, width, depth]
+            Tensor: The decoded output of shape [batch, width, depth, height, channels]
         """
+        input = self._from_input_shape(input)
         
-        latent = self.encoder.forward(input)
-        output = self.decoder.forward(latent)
+        latent = self.encoder(input)
+        output = self.decoder(latent)
         
-        return output
-        
+        return self._to_output_shape(output)
+    
     
     def encode(self, input: Tensor) -> Tensor:
         """Forwards the input through the encoder part and returns the latent representation.
 
         Args:
-            input (Tensor): The networks input of shape [batch, height*channels, width, depth]
+            input (Tensor): The networks input of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor: The latent representation of shape [batch, height*channels, width, depth]
+            Tensor: The latent representation of shape [batch, width, depth, height, channels]
         """
-        return self.encoder.forward(input)
+        input = self._from_input_shape(input)
+        
+        latent = self.encoder(input)
+        
+        return self._to_latent_shape(latent)
     
     
     def decode(self, latent: Tensor) -> Tensor:
         """Forwards the latent representation through the decoder part and returns the decoded output.
 
         Args:
-            input (Tensor): The latent representation of shape [batch, height*channels, width, depth]
+            input (Tensor): The latent representation of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor: The decoded output of shape [batch, height*channels, width, depth]
+            Tensor: The decoded output of shape [batch, width, depth, height, channels]
         """
-        return self.decoder.forward(latent)
+        latent = self._from_latent_shape(latent)
+        
+        output = self.decoder(latent)
+        
+        return self._to_output_shape(output)
+    
+    
+    def _from_input_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms an input tensor of shape [batch, width, depth, height, channels] into the
+        shape required for this model.
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, width, depth, height, channels].
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, height*channels, width, depth]
+        """
+        b, w, d, h, c = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
+    
+    
+    def _to_output_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms the output of the model into the desired shape of the output:
+        [batch, width, depth, height, channels]
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, height*channels, width, depth]
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, width, depth, height, channels]
+        """
+        b = tensor.shape[0]
+        w, d, h = self.out_dims
+        return tensor.reshape(b, h, 4, w, d).permute(0, 3, 4, 1, 2)
+    
+    
+    def _to_latent_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms the output of the encoder model into the desired 
+        shape of the latent representation: [batch, width, depth, height, channels]
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, height*channels, width, depth]
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, width, depth, height, channels]
+        """
+        b = tensor.shape[0]
+        c, w, d, h = self.latent_shape
+        return tensor.reshape(b, h, c, w, d).permute(0, 3, 4, 1, 2)
+    
+    
+    def _from_latent_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms an latent representation of shape [batch, width, depth, height, channels] 
+        into the shape required for the decoder model
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, width, depth, height, channels].
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, height*channels, width, depth]
+        """
+        b, w, d, h, c = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
        
         
     def summary(self):

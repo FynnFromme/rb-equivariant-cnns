@@ -14,15 +14,13 @@ class DataReader(IterableDataset):
                  dataset: str, 
                  device: str = None,
                  samples: int = -1,
-                 shuffle: bool = True,
-                 torch_format: bool = True):
+                 shuffle: bool = True):
         super().__init__()
         
         self.sim_file = sim_file
         self.dataset = dataset
         self.device = device
         self.shuffle = shuffle
-        self.torch_format = torch_format
         
         self.mean, self.std = standardization_params(sim_file)
         self.snapshot_shape = snapshot_shape(sim_file, dataset)
@@ -44,44 +42,12 @@ class DataReader(IterableDataset):
 
             for batch_indices in to_batches(indices, batch_size):
                 batch = snapshots[batch_indices]
-                
-                if self.torch_format:
-                    batch = self.sim_to_torch_format(batch)
-                    
                 batch = torch.Tensor(batch)
                 
                 if self.device is not None:
                     batch = batch.to(self.device)
                 
                 yield batch, batch # input equals output for autoencoder
-                
-    
-    def sim_to_torch_format(self, data: Tensor) -> Tensor:
-        assert len(data.shape) in (4, 5)
-        
-        h, c, w, d = self.snapshot_shape
-        assert tuple(data.shape[-4:]) == (h, c, w, d)
-        
-        if len(data.shape) == 4: # single snapshot
-            data = data.reshape(h*c, w, d)
-        else: # batch
-            data = data.reshape(-1, h*c, w, d)
-            
-        return data
-    
-    
-    def torch_to_sim_format(self, data: Tensor) -> Tensor:
-        assert len(data.shape) in (3, 4)
-        
-        h, c, w, d = self.snapshot_shape
-        assert tuple(data.shape[-3:]) == (h*c, w, d)
-        
-        if len(data.shape) == 3: # single snapshot
-            data = data.reshape(h, c, w, d)
-        else: # batch
-            data = data.reshape(-1, h, c, w, d)
-            
-        return data
     
                 
     def standardize_batch(self, batch: Tensor) -> Tensor:

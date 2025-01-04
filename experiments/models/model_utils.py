@@ -13,8 +13,8 @@ def summary(model: Module, out_shapes: OrderedDict, layer_params: OrderedDict, l
     """Print summary of the model."""
     table = PrettyTable()
     table.field_names = ['Layer', 
-                            'Output shape [c, |G|, w, d, h]', 
-                            'Parameters']
+                         f'Output shape [c, {"|G|, " if len(latent_shape)==5 else ""}w, d, h]', 
+                         'Parameters']
     table.align['Layer'] = 'l'
     table.align['Output shape [c, |G|, w, d, h]'] = 'r'
     table.align['Parameters'] = 'r'

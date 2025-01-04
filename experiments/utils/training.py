@@ -25,8 +25,7 @@ def train(model: torch.nn.Module, models_dir: str, model_name: str, start_epoch:
     writer = SummaryWriter(f"runs/{model_name}") # Tensorboard writer
 
     output_dir = os.path.join(models_dir, model_name)
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     best_loss = np.inf
     best_epoch = -1

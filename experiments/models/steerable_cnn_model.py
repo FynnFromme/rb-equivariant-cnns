@@ -228,65 +228,118 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         self.decoder.eval(*args, **kwargs)
     
         
-    def forward(self, input: Tensor | GeometricTensor) -> Tensor | GeometricTensor:
-        """Forwards the input through the network and returns the decoded output.
+    def forward(self, input: Tensor) -> Tensor:
+        """Forwards the input through the network and returns the output.
 
         Args:
-            input (Tensor | GeometricTensor): The networks input of shape [batch,
-                height*sum(fieldsizes), width, depth]
+            input (Tensor): The networks input of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor | GeometricTensor: The decoded output of shape [batch, height*sum(fieldsizes), 
-                width, depth]
+            Tensor: The decoded output of shape [batch, width, depth, height, channels]
         """
-        got_geom_tensor = isinstance(input, GeometricTensor)
-        if not got_geom_tensor:
-            input = GeometricTensor(input, self.in_type)
-            
-        latent = self.encoder.forward(input)
-        output = self.decoder.forward(latent)
+        input = self._from_input_shape(input)
         
-        return output if got_geom_tensor else output.tensor
+        input = GeometricTensor(input, self.encoder.in_type)
+        latent = self.encoder(input)
+        output = self.decoder(latent)
+        output = output.tensor
         
-        
-    def encode(self, input: Tensor | GeometricTensor) -> Tensor | GeometricTensor:
+        return self._to_output_shape(output)
+    
+    
+    def encode(self, input: Tensor) -> Tensor:
         """Forwards the input through the encoder part and returns the latent representation.
 
         Args:
-            input (Tensor | GeometricTensor): The networks input of shape [batch, height*sum(fieldsizes), 
-                width, depth]
+            input (Tensor): The networks input of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor | GeometricTensor: The latent representation of shape [batch, height*sum(fieldsizes), 
-                width, depth]
+            Tensor: The latent representation of shape [batch, width, depth, height, channels]
         """
-        got_geom_tensor = isinstance(input, GeometricTensor)
-        if not got_geom_tensor:
-            input = GeometricTensor(input, self.in_type)
-            
-        latent = self.encoder.forward(input)
+        input = self._from_input_shape(input)
         
-        return latent if got_geom_tensor else latent.tensor
+        input = GeometricTensor(input, self.encoder.in_type)
+        latent = self.encoder(input)
+        output = output.tensor
+        
+        return self._to_latent_shape(latent)
     
     
-    def decode(self, latent: Tensor | GeometricTensor) -> Tensor | GeometricTensor:
+    def decode(self, latent: Tensor) -> Tensor:
         """Forwards the latent representation through the decoder part and returns the decoded output.
 
         Args:
-            input (Tensor | GeometricTensor): The latent representation of shape [batch, 
-                height*sum(fieldsizes), width, depth]
+            input (Tensor): The latent representation of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor | GeometricTensor: The decoded output of shape [batch, height*sum(fieldsizes), 
-                width, depth]
+            Tensor: The decoded output of shape [batch, width, depth, height, channels]
         """
-        got_geom_tensor = isinstance(latent, GeometricTensor)
-        if not got_geom_tensor:
-            latent = GeometricTensor(latent, self.decoder.in_type)
-            
-        output = self.decoder.forward(latent)
+        latent = self._from_latent_shape(latent)
         
-        return output if got_geom_tensor else output.tensor
+        latent = GeometricTensor(latent, self.decoder.in_type)
+        output = self.decoder(latent)
+        output = output.tensor
+        
+        return self._to_output_shape(output)
+    
+    
+    def _from_input_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms an input tensor of shape [batch, width, depth, height, sum(fieldsizes)] into the
+        shape required for this model.
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, width, depth, height, sum(fieldsizes)].
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, height*sum(fieldsizes), width, depth]
+        """
+        b, w, d, h, c = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
+    
+    
+    def _to_output_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms the output of the model into the desired shape of the output:
+        [batch, width, depth, height, sum(fieldsizes)]
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, height*sum(fieldsizes), width, depth]
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, width, depth, height, sum(fieldsizes)]
+        """
+        b = tensor.shape[0]
+        w, d, h = self.out_dims
+        return tensor.reshape(b, h, 4, w, d).permute(0, 3, 4, 1, 2)
+    
+    
+    def _to_latent_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms the output of the encoder model into the desired 
+        shape of the latent representation: [batch, width, depth, height, sum(fieldsizes)]
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, height*sum(fieldsizes), width, depth]
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, width, depth, height, sum(fieldsizes)]
+        """
+        b = tensor.shape[0]
+        c, w, d, h = self.latent_shape
+        return tensor.reshape(b, h, c, w, d).permute(0, 3, 4, 1, 2)
+    
+    
+    def _from_latent_shape(self, tensor: Tensor) -> Tensor:
+        """Transforms an latent representation of shape [batch, width, depth, height, sum(fieldsizes)] 
+        into the shape required for the decoder model
+
+        Args:
+            tensor (Tensor): Tensor of shape [batch, width, depth, height, sum(fieldsizes)].
+
+        Returns:
+            Tensor: Transformed tensor of shape [batch, height*sum(fieldsizes), width, depth]
+        """
+        b, w, d, h, c = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
+    
     
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:
         """Compute the shape the output tensor which would be generated by this module when a tensor with shape

@@ -1,13 +1,14 @@
 from .data_reader import DataReader, num_samples
 
 import numpy as np
-
 import torch
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 from typing import Generator, Literal
+
+import os
 
 
 def predict_batches(model: torch.nn.Module, data_generator: Generator, data_reader: DataReader):
@@ -21,22 +22,17 @@ def predict_batches(model: torch.nn.Module, data_generator: Generator, data_read
         inputs = inputs.cpu().detach().numpy()
         preds = preds.cpu().detach().numpy()
         
-        inputs = data_reader.torch_to_sim_format(inputs)
-        preds = data_reader.torch_to_sim_format(preds)
-        
         # remove standardization
         inputs = data_reader.de_standardize_batch(inputs)
         preds = data_reader.de_standardize_batch(preds)
-        
-        inputs = inputs.transpose(0, 3, 4, 1, 2) # -> n, w, d, h, c
-        preds = preds.transpose(0, 3, 4, 1, 2) # -> n, w, d, h, c
         
         yield inputs, preds
 
 
 def auto_encoder_animation(model: torch.nn.Module, 
-                           axis: int, 
-                           animation_name: str, 
+                           axis: int,
+                           anim_dir: str, 
+                           anim_name: str, 
                            slice: int, 
                            fps: int, 
                            sim_file: str, 
@@ -108,4 +104,6 @@ def auto_encoder_animation(model: torch.nn.Module,
     frames = min(num_samples(sim_file, dataset), frames)
     
     anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
-    anim.save(f'{animation_name}.mp4')
+    
+    os.makedirs(anim_dir, exist_ok=True)
+    anim.save(os.path.join(anim_dir, anim_name))

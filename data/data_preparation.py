@@ -17,7 +17,6 @@ SIM_DATA_DIR = os.path.join(DATA_DIR, '..', '..', 'simulation', '3d', 'data')
 
 class DataPreparation:
     def __init__(self, 
-                 out_shape: str ='nhcwd', # tf: 'nwdhc'
                  transformation: Callable[[np.ndarray, Any], np.ndarray] = lambda batch, precomputed: batch,
                  transform_precomputation: Callable[[list[str]], dict] = lambda files: defaultdict(lambda:None),
                  out_channels: int = 4,
@@ -25,13 +24,12 @@ class DataPreparation:
                  p_valid: float = 0.2, 
                  p_test: float = 0.2, 
                  first_snapshot: int = 0,
-                 step: int = 1):
+                 step: int = 1,
+                 batch_size: int = 64):
         """Initializes a data preparation object that transforms simulation data into
         a format that is suited for machine learning.
 
         Args:
-            out_shape (str, optional): The order of the dimensions to output (n: samples,
-                c: channels, w: width, d: depth, h: height). Defaults to 'nhcwd'.
             transformation (Callable, optional): Transformation applied to the simulation data.
                 For instance transforming the rb data into heatflux via `DataPreparation.compute_heatflux`.
                 The second argument is a precomputed value for the corresponding simulation (e.g. the precomputed
@@ -45,14 +43,8 @@ class DataPreparation:
             p_test (float, optional): The fraction of testing data. Defaults to 0.2.
             first_snapshot (int, optional): The first snapshot of the simulation data used for ML. Defaults to 0.
             step (int, optional): Can be used to only take every for example 2nd snapshot. Defaults to 1.
-        """
-        # precomputed mappings for the output dimension order
-        out_shape = out_shape.lower()
-        assert len(out_shape) == 5 and set(out_shape.lower()) == set('nwdhc')
-        self.dim2index = {dim : out_shape.index(dim) for dim in 'nwdhc'}
-        self.transpose2outshape = ['nwdhc'.index(dim) for dim in out_shape]
-        self.transpose2outshape_without_n = ['wdhc'.index(dim) for dim in out_shape.replace('n','')]
-        
+            batch_size (int, optional): The number of samples loaded into memory at once. Defaults to 64.
+        """        
         self.transformation = transformation
         self.transform_precomputation = transform_precomputation
         self.out_channels = out_channels
@@ -63,6 +55,8 @@ class DataPreparation:
         
         self.first_snapshot = first_snapshot
         self.step = step
+        self.batch_size = batch_size
+        
         
     def prepare_data(self, simulation_name: str):
         """Performs the actual data preparation:
@@ -73,6 +67,8 @@ class DataPreparation:
         The results are stored in the datasets directory as a .h5 file. The file includes 3 datasets
         ("train", "valid", "test") that include the data. It also includes the datasets "mean" and 
         "variance" in order to be able to unstandardize the data later.
+        
+        The data has the shape [samples, width, depth, height, channels].
 
         Args:
             simulation_name (str): The name of the simulation.
@@ -130,7 +126,7 @@ class DataPreparation:
             batch_means = []
             batch_sizes = [] # last batch might has different size
             
-            for batch in self._read_data(fn, batch_size=64, transform_args=None, transform=False):
+            for batch in self._read_data(fn, transform_args=None, transform=False):
                 batch_means.append(batch[:, :, :, :, 0].mean())
                 batch_sizes.append(batch.shape[0])
                 
@@ -171,7 +167,7 @@ class DataPreparation:
         return sim_paths
 
 
-    def _read_data(self, filename: str, batch_size: int, transform_args: Any, 
+    def _read_data(self, filename: str, transform_args: Any, 
                    transform: bool = True) -> Generator[np.ndarray, None, None]:
         """Yields the transformed simulation data of the given simulation file batch-wise.
         Assuming the simulation data has the shape hdwcn, the transformed data is yielded in shape
@@ -180,7 +176,6 @@ class DataPreparation:
 
         Args:
             filename (str): The filename of the simulation.
-            batch_size (int): The size of each batch.
             transform_args (Any): Precomputed information required for transformation.
             transform (bool, optional): Whether to transform the data. Defaults to True.
 
@@ -191,8 +186,8 @@ class DataPreparation:
             snapshots = hf['data']
             N = snapshots.shape[-1]
             
-            for i in range(self.first_snapshot, N, self.step*batch_size):
-                batch = snapshots[:, :, :, :, i:i+self.step*batch_size:self.step]
+            for i in range(self.first_snapshot, N, self.step*self.batch_size):
+                batch = snapshots[:, :, :, :, i:i+self.step*self.batch_size:self.step]
                 batch = batch.transpose([4, 2, 1, 0, 3]) # hdwcn -> nwdhc
                 if transform:
                     batch = self.transformation(batch, transform_args)
@@ -213,10 +208,9 @@ class DataPreparation:
         
         scaler = StandardScaler()
         
-        batch_size = 64
         # make sure to load arrays sequentially to save memory
         for i, filename in enumerate(sim_filenames):
-            for batch in self._read_data(filename, batch_size, transform_args[filename]):
+            for batch in self._read_data(filename, transform_args[filename]):
                 scaler.partial_fit(batch.reshape((batch.shape[0], -1)))
                 
             print(f'-> fitted scaler to simulation file {i+1}/{len(sim_filenames)}')
@@ -233,33 +227,18 @@ class DataPreparation:
             datafile (h5py.File): The output file.
             dims (tuple): The spatial dimensions of the simulation data.
         """
-        
-        # note: here we work on the output dimension order
-        shape = [0]*5
-        shape[self.dim2index['w']] = dims[0]
-        shape[self.dim2index['d']] = dims[1]
-        shape[self.dim2index['h']] = dims[2]
-        shape[self.dim2index['c']] = self.out_channels
-        shape.pop(self.dim2index['n'])
-        
-        chunk_shape = [1]*5
-        chunk_shape[self.dim2index['w']] = dims[0]
-        chunk_shape[self.dim2index['d']] = dims[1]
-        chunk_shape[self.dim2index['h']] = dims[2]
-        chunk_shape.pop(self.dim2index['n'])
-        chunk_shape = tuple(chunk_shape)
+        shape = (*dims, self.out_channels)
+        chunk_shape = (*dims, 1)
         
         mean_data = datafile.create_dataset("mean", shape, chunks=chunk_shape)
         std_data = datafile.create_dataset("std", shape, chunks=chunk_shape)  
         
         mean = scaler.mean_
         mean = mean.reshape(*dims, self.out_channels) # since scaler works on flattened features
-        mean = mean.transpose(self.transpose2outshape_without_n) # use output dim order
         mean_data[:, :, :, :] = mean
         
         std = scaler.scale_
         std = std.reshape(*dims, self.out_channels) # since scaler works on flattened features
-        std = std.transpose(self.transpose2outshape_without_n) # use output dim order
         std_data[:, :, :, :] = std
 
 
@@ -315,25 +294,12 @@ class DataPreparation:
         """
         datafile = h5py.File(os.path.join(DATA_DIR, f'{simulation_name}.h5'), 'w')
         
-        # note: here we work on the output dimension order
-        shape = [0]*5
-        shape[self.dim2index['w']] = dims[0]
-        shape[self.dim2index['d']] = dims[1]
-        shape[self.dim2index['h']] = dims[2]
-        shape[self.dim2index['c']] = self.out_channels
+        samples_shape = (*dims, self.out_channels)
+        chunk_shape = (1, *dims, 1)
         
-        chunk_shape = [1]*5
-        chunk_shape[self.dim2index['w']] = dims[0]
-        chunk_shape[self.dim2index['d']] = dims[1]
-        chunk_shape[self.dim2index['h']] = dims[2]
-        chunk_shape = tuple(chunk_shape)
-        
-        shape[self.dim2index['n']] = N_train
-        train_data = datafile.create_dataset("train", shape, chunks=chunk_shape)
-        shape[self.dim2index['n']] = N_valid
-        valid_data = datafile.create_dataset("valid", shape, chunks=chunk_shape)
-        shape[self.dim2index['n']] = N_test
-        test_data = datafile.create_dataset("test", shape, chunks=chunk_shape)
+        train_data = datafile.create_dataset("train", (N_train, *samples_shape), chunks=chunk_shape)
+        valid_data = datafile.create_dataset("valid", (N_valid, *samples_shape), chunks=chunk_shape)
+        test_data = datafile.create_dataset("test", (N_test, *samples_shape), chunks=chunk_shape)
         
         train_data.attrs['N'] = N_train
         valid_data.attrs['N'] = N_valid
@@ -358,25 +324,19 @@ class DataPreparation:
         
         print('writing files...')
         
-        batch_size = 64 # number of snapshots to load at once
-        
         for dataset_name, files in zip(['train', 'valid', 'test'], [train_files, valid_files, test_files]):
             dataset = datafile[dataset_name] # output gets stored in this dataset
             
             next_index = 0
             for i, filename in enumerate(files):
                 # read data sequentially to save memory
-                for batch in self._read_data(filename, batch_size, transform_args[filename]):
+                for batch in self._read_data(filename, transform_args[filename]):
                     scaled_batch = self._standardize_batch(scaler, batch)
                     
                     batch_snaps = scaled_batch.shape[0]
+                    dataset[next_index:next_index+batch_snaps, ...] = scaled_batch
                     
-                    # save data in output dimension order
-                    snap_slice = [slice(0, None)] * 5
-                    snap_slice[self.dim2index['n']] = slice(next_index, next_index+batch_snaps)
-                    dataset[*snap_slice] = scaled_batch.transpose(*self.transpose2outshape)
-                    
-                    next_index = next_index+batch_snaps
+                    next_index += batch_snaps
                     
                 print(f'-> written {i+1}/{len(files)} {dataset_name} files')
 
@@ -403,7 +363,6 @@ class DataPreparation:
 
 if __name__ == '__main__':
     prep = DataPreparation(
-                out_shape='nhcwd', # required shape for steerable pytorch implementation 
                 p_train=0.6, p_valid=0.2, p_test=0.2, 
                 first_snapshot=200,
                 step=1) # every shapshot
