@@ -9,6 +9,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 import os
+import json
 import glob
 import re
 
@@ -37,16 +38,27 @@ def train(model: torch.nn.Module,
           data_augmentation: DataAugmentation, 
           plot: bool,
           initial_early_stop_count: int = 0):
-
-    writer = SummaryWriter(f"runs/{model_name}") # Tensorboard writer
+    
+    tb_dir = os.path.join(os.path.dirname(os.path.abspath(models_dir)), 'runs')
+    writer = SummaryWriter(os.path.join(tb_dir, model_name)) # Tensorboard writer
 
     output_dir = os.path.join(models_dir, model_name)
     os.makedirs(output_dir, exist_ok=True)
+    log_file = os.path.join(output_dir, 'loss_log.json')
 
-    best_loss = np.inf
-    best_epoch = -1
-    train_loss_values = []
-    valid_loss_values = []
+    if start_epoch == 0:
+        best_loss = np.inf
+        best_epoch = -1
+        train_loss_values = []
+        valid_loss_values = []
+    else:
+        best_loss = compute_validation_loss(valid_loader, model, loss_fn)
+        best_epoch = start_epoch
+        with open(log_file, 'r') as f:
+            loss_dict = json.load(f)
+            train_loss_values = loss_dict['train_loss'][:start_epoch]
+            valid_loss_values = loss_dict['train_loss'][:start_epoch]
+        
     early_stop_count = initial_early_stop_count
     
     with tqdm(total=epochs, desc='training', unit='epoch') as pbar:
@@ -60,6 +72,7 @@ def train(model: torch.nn.Module,
             writer.add_scalar('Loss/valid', valid_loss, epoch)
             train_loss_values.append(train_loss)
             valid_loss_values.append(valid_loss)
+            save_loss_log(log_file, train_loss_values, valid_loss_values)
             
             if use_lr_scheduler:
                 lr_scheduler.step()
@@ -82,15 +95,20 @@ def train(model: torch.nn.Module,
                 early_stop_count += 1
             
             if early_stop_count >= early_stopping:
-                print(f"Early stopping at epoch {epoch}. \
-                    Best epoch is {best_epoch} with a validation loss of {best_loss}.")
+                print(f'Early stopping at epoch {epoch}.')
                 break
+        else:
+            print(f'Finished training after {epoch} epochs without early stopping.')
+        
+        print(f'Best epoch is epoch {best_epoch} with a validation loss of {best_loss}.')
+        print(f'Trained model is saved in {output_dir}')
+        print(f'A log of both training and validation log is saved in {log_file}')
             
     writer.flush()
     writer.close()
     
     if plot:
-        epochs = range(start_epoch+1, start_epoch+epochs+1)
+        epochs = range(1, start_epoch+epochs+1)
         plt.plot(epochs, train_loss_values, label="train")
         plt.plot(epochs, valid_loss_values, label="valid")
         plt.xticks(epochs)
@@ -157,19 +175,28 @@ def save_checkpoint(path, weights, optimizer_state, early_stop_count):
         'early_stop_count': early_stop_count
     }, path)
     
+    
+def save_loss_log(log_file, train_loss_values, valid_loss_values):
+    with open(log_file, 'w+') as f:
+        loss_dict = {'train_loss': train_loss_values, 'valid_loss': valid_loss_values}
+        json.dump(loss_dict, f)
+    
 
 def load_trained_model(model, optimizer, models_dir, model_name, epoch=-1):
     directory = os.path.join(models_dir, model_name)
     
     if epoch == 0:
-        return 0
+        return 0, 0
     if not os.path.exists(directory) or not os.listdir(directory):
+        if epoch == -1: return 0, 0
         raise Exception('no saved model to load')
     elif epoch == -1:
         # load latest epoch
         pattern = re.compile(r"epoch([0-9]+)\.tar")
         saved_epochs = [filename for filename in os.listdir(directory) if pattern.fullmatch(filename)]
-        file_path = max(saved_epochs, key=lambda f: int(pattern.fullmatch(f).group(1)))
+        filename = max(saved_epochs, key=lambda f: int(pattern.fullmatch(f).group(1)))
+        epoch = int(pattern.fullmatch(filename).group(1))
+        file_path = os.path.join(directory, filename)
     else:
         # load specified epoch
         file_path = os.path.join(directory, f'epoch{epoch}.tar')
@@ -184,7 +211,7 @@ def load_trained_model(model, optimizer, models_dir, model_name, epoch=-1):
     
     print(f"Loaded state at epoch {epoch} with an early stop count of {early_stop_count}.")
     
-    return early_stop_count
+    return early_stop_count, epoch
     
     
 def remove_saved_models(directory):
