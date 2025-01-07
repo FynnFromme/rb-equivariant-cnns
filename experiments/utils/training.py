@@ -12,6 +12,7 @@ import os
 import json
 import glob
 import re
+import time
 
 from copy import deepcopy
 import matplotlib.pyplot as plt
@@ -23,6 +24,7 @@ from .data_augmentation import DataAugmentation
 def train(model: torch.nn.Module, 
           models_dir: str, 
           model_name: str, 
+          train_name: str,
           start_epoch: int, 
           epochs: int, 
           train_loader: DataLoader, 
@@ -40,39 +42,43 @@ def train(model: torch.nn.Module,
           initial_early_stop_count: int = 0):
     
     tb_dir = os.path.join(os.path.dirname(os.path.abspath(models_dir)), 'runs')
-    writer = SummaryWriter(os.path.join(tb_dir, model_name)) # Tensorboard writer
+    writer = SummaryWriter(os.path.join(tb_dir, model_name, train_name)) # Tensorboard writer
 
-    output_dir = os.path.join(models_dir, model_name)
+    output_dir = os.path.join(models_dir, model_name, train_name)
     os.makedirs(output_dir, exist_ok=True)
-    log_file = os.path.join(output_dir, 'loss_log.json')
+    log_file = os.path.join(output_dir, 'log.json')
 
     if start_epoch == 0:
         best_loss = np.inf
         best_epoch = -1
         train_loss_values = []
         valid_loss_values = []
+        epoch_duration_values = []
     else:
         best_loss = compute_validation_loss(valid_loader, model, loss_fn)
         best_epoch = start_epoch
         with open(log_file, 'r') as f:
-            loss_dict = json.load(f)
-            train_loss_values = loss_dict['train_loss'][:start_epoch]
-            valid_loss_values = loss_dict['train_loss'][:start_epoch]
+            log_dict = json.load(f)
+            train_loss_values = log_dict['train_loss'][:start_epoch]
+            valid_loss_values = log_dict['valid_loss'][:start_epoch]
+            epoch_duration_values = log_dict['epoch_duration'][:start_epoch]
         
     early_stop_count = initial_early_stop_count
     
-    with tqdm(total=epochs, desc='training', unit='epoch') as pbar:
+    with tqdm(initial=start_epoch, total=start_epoch+epochs, desc='training', unit='epoch', dynamic_ncols=True) as pbar:
         for epoch in range(1+start_epoch, 1+start_epoch+epochs):
+            epoch_start = time.time()
             train_loss, valid_loss = train_epoch(train_loader, valid_loader, model, loss_fn, optimizer, 
                                                 data_augmentation, epoch, batch_size, train_samples)
-            
+            epoch_duration = time.time() - epoch_start
             pbar.update(1)
             
             writer.add_scalar('Loss/train', train_loss, epoch)
             writer.add_scalar('Loss/valid', valid_loss, epoch)
             train_loss_values.append(train_loss)
             valid_loss_values.append(valid_loss)
-            save_loss_log(log_file, train_loss_values, valid_loss_values)
+            epoch_duration_values.append(epoch_duration)
+            save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values)
             
             if use_lr_scheduler:
                 lr_scheduler.step()
@@ -113,7 +119,7 @@ def train(model: torch.nn.Module,
         plt.plot(epochs, valid_loss_values, label="valid")
         plt.xticks(epochs)
         
-        plt.title(f"{model_name}   Best loss: {best_loss:>.3f}   Best epoch: {best_epoch}")
+        plt.title(f"{model_name} ({train_name})  Best loss: {best_loss:>.3f}   Best epoch: {best_epoch}")
         plt.legend()
         
         plt.show()
@@ -131,7 +137,7 @@ def train_epoch(train_loader: DataLoader,
     model.train()
     running_loss = 0.0
     
-    with tqdm(total=math.ceil(samples/batch_size), desc=f'epoch {epochnum}', unit='batch') as pbar:
+    with tqdm(total=math.ceil(samples/batch_size), desc=f'epoch {epochnum}', unit='batch', dynamic_ncols=True) as pbar:
         for i, (x, _) in enumerate(train_loader, 1):
             x = data_augmentation(x)
             
@@ -176,14 +182,16 @@ def save_checkpoint(path, weights, optimizer_state, early_stop_count):
     }, path)
     
     
-def save_loss_log(log_file, train_loss_values, valid_loss_values):
+def save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values):
     with open(log_file, 'w+') as f:
-        loss_dict = {'train_loss': train_loss_values, 'valid_loss': valid_loss_values}
-        json.dump(loss_dict, f)
+        log_dict = {'train_loss': train_loss_values, 
+                    'valid_loss': valid_loss_values,
+                    'epoch_duration': epoch_duration_values}
+        json.dump(log_dict, f)
     
 
-def load_trained_model(model, optimizer, models_dir, model_name, epoch=-1):
-    directory = os.path.join(models_dir, model_name)
+def load_trained_model(model, optimizer, models_dir, model_name, train_name, epoch=-1):
+    directory = os.path.join(models_dir, model_name, train_name)
     
     if epoch == 0:
         return 0, 0

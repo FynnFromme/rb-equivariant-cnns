@@ -20,9 +20,11 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser()
 
-parser.add_argument('model', type=str, choices=['3DCNN', 'CNN', 'steerableCNN'])
+parser.add_argument('model', type=str, choices=['3DCNN', 'CNN', 'steerable3DCNN', 'steerableCNN'])
 parser.add_argument('epochs', type=int)
+parser.add_argument('train_name', type=str)
 parser.add_argument('-start_epoch', type=int, default=-1)
+parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
 parser.add_argument('-only_save_best', type=bool, default=True)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_train', type=int, default=-1)
@@ -110,8 +112,11 @@ OPTIMIZER = torch.optim.Adam
 ########################
 print('Building model...')
 from models.steerable_cnn_model import RBSteerableAutoencoder
+from models.steerable_cnn3d_model import RB3DSteerableAutoencoder
 from models.cnn_model import RBAutoencoder
 from models.cnn3d_model import RB3DAutoencoder
+
+from utils.flipRot2dOnR3 import flipRot2dOnR3
 
 
 FLIPS, ROTS = args.flips, args.rots
@@ -119,12 +124,23 @@ match args.model:
     case 'steerableCNN':
         print(f'Selected Steerable CNN with {ROTS=}, {FLIPS=}')
         gspace = gspaces.flipRot2dOnR2 if FLIPS else gspaces.rot2dOnR2
+        G_size = 2*ROTS if FLIPS else ROTS
         model = RBSteerableAutoencoder(gspace=gspace(N=ROTS),
                                     rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
                                     encoder_channels=(8, 16, 32, 64),
-                                    latent_channels=32//8, # 32 // |G|
+                                    latent_channels=32//G_size, # 32 // |G|
                                     v_kernel_size=V_KERNEL_SIZE, h_kernel_size=H_KERNEL_SIZE,
                                     drop_rate=DROP_RATE, nonlinearity=STEERABLE_NONLINEARITY) 
+    case 'steerable3DCNN':
+        print(f'Selected Steerable 3D CNN with {ROTS=}, {FLIPS=}')
+        gspace = flipRot2dOnR3 if FLIPS else gspaces.rot2dOnR3
+        G_size = 2*ROTS if FLIPS else ROTS
+        model = RB3DSteerableAutoencoder(gspace=gspace(n=ROTS),
+                                        rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
+                                        encoder_channels=(32, 64, 128, 256),
+                                        latent_channels=32//G_size,
+                                        kernel_size=H_KERNEL_SIZE,
+                                        drop_rate=DROP_RATE, nonlinearity=STEERABLE_NONLINEARITY) 
     case 'CNN':
         print('Selected CNN')
         model = RBAutoencoder(rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
@@ -152,8 +168,10 @@ model.summary()
 models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 
 model_name = {RBSteerableAutoencoder: f'{"D" if FLIPS else "C"}{ROTS}cnn',
+              RB3DSteerableAutoencoder: f'3D-{"D" if FLIPS else "C"}{ROTS}cnn',
               RBAutoencoder: 'cnn',
               RB3DAutoencoder: '3Dcnn'}[model.__class__]
+train_name = args.train_name
 
 loss_fn = torch.nn.MSELoss()
 optimizer = OPTIMIZER(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
@@ -161,21 +179,22 @@ optimizer = OPTIMIZER(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_
 data_augmentation = DataAugmentation(in_height=model.in_dims[-1], gspace=gspaces.flipRot2dOnR2(N=4))
 
 
-EPOCHS = args.epochs
 START_EPOCH = args.start_epoch # loads pretrained model if greater 0, loads last available epoch for -1
 
 initial_early_stop_count, loaded_epoch = training.load_trained_model(model=model, 
                                                                      optimizer=optimizer, 
                                                                      models_dir=models_dir, 
                                                                      model_name=model_name, 
+                                                                     train_name=train_name,
                                                                      epoch=START_EPOCH)
 
 lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=LR_DECAY_EPOCHS, 
                                                     gamma=LR_DECAY, last_epoch=loaded_epoch-1)
 
+EPOCHS = args.epochs - loaded_epoch if args.including_loaded_epochs else args.epochs
 
 
-training.train(model=model, models_dir=models_dir, model_name=model_name, start_epoch=loaded_epoch, 
+training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 
                epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, 
                optimizer=optimizer, lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, train_samples=N_TRAIN, 
                batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
