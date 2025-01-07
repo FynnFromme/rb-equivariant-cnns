@@ -82,7 +82,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                  h_kernel_size: int = 3,
                  drop_rate: float = 0.2,
                  nonlinearity: Callable = enn.ELU):
-        """A Rayleigh-Bénard autoencoder based on 3D steerable convolutions without vertical parameter sharing.
+        """A Rayleigh-Bénard autoencoder based on steerable convolutions without vertical parameter sharing.
 
         Args:
             gspace (GSpace): The group of transformations to be equivariant to. For `gspaces.flipRot2dOnR2(N)`
@@ -92,7 +92,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
             encoder_channels (tuple): The channels of the encoder. Each entry results in a corresponding layer.
                 The decoder uses the channels in reversed order.
             latent_channels (int): The number of channels in the latent space.
-             v_kernel_size (int, optional): The vertical kernel size. Defaults to 3.
+            v_kernel_size (int, optional): The vertical kernel size. Defaults to 3.
             h_kernel_size (int, optional): The horizontal kernel size (in both directions). Defaults to 3.
             drop_rate (float, optional): The drop rate used for dropout. Set to 0 to turn off dropout. 
                 Defaults to 0.2.
@@ -251,10 +251,10 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         the GeometricTensor, which is internally used.
 
         Args:
-            input (GeometricTensor): The networks input of shape [batch, height*channels, width, depth]
+            input (GeometricTensor): The networks input of shape [batch, sum(fieldsizes)*channels, width, depth]
 
         Returns:
-            GeometricTensor: The decoded output of shape [batch, height*channels, width, depth]
+            GeometricTensor: The decoded output of shape [batch, sum(fieldsizes)*channels, width, depth]
         """
         latent = self.encoder(input)
         output = self.decoder(latent)
@@ -269,7 +269,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
             input (Tensor): The networks input of shape [batch, width, depth, height, channels]
 
         Returns:
-            Tensor: The latent representation of shape [batch, width, depth, height, channels]
+            Tensor: The latent representation of shape [batch, width, depth, height, sum(fieldsizes)]
         """
         input = self._from_input_shape(input)
         
@@ -284,7 +284,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         """Forwards the latent representation through the decoder part and returns the decoded output.
 
         Args:
-            input (Tensor): The latent representation of shape [batch, width, depth, height, channels]
+            input (Tensor): The latent representation of shape [batch, width, depth, height, sum(fieldsizes)]
 
         Returns:
             Tensor: The decoded output of shape [batch, width, depth, height, channels]

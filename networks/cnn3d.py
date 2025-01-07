@@ -57,7 +57,7 @@ class RB3DConv(nn.Module):
             h_padding = [network_utils.required_same_padding(in_dims[i], h_kernel_size, h_stride, h_dilation, split=True)[1] 
                          for i in [0, 1]]
             
-        self.v_padding = 0
+        self.v_padding = 0, 0
         if v_pad_mode != 'valid':
             self.v_padding = network_utils.required_same_padding(in_dims[2], v_kernel_size, v_stride, 
                                                          dilation=v_dilation, split=True)
@@ -65,7 +65,7 @@ class RB3DConv(nn.Module):
         out_height = network_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, dilation=v_dilation, 
                                             pad=v_pad_mode!='valid')
 
-        self.conv2d = nn.Conv3d(in_channels=in_channels, 
+        self.conv3d = nn.Conv3d(in_channels=in_channels, 
                                 out_channels=out_channels, 
                                 kernel_size=(h_kernel_size, h_kernel_size, v_kernel_size),
                                 padding=(*h_padding, 0),  # vertical padding is done separately
@@ -100,15 +100,15 @@ class RB3DConv(nn.Module):
         # vertical padding (horizontal padding is done by conv operation)
         input = F.pad(input, self.v_padding, 'constant', 0)
         
-        return self.conv2d.forward(input)
+        return self.conv3d.forward(input)
         
         
     def train(self, *args, **kwargs):
-        return self.conv2d.train(*args, **kwargs)
+        return self.conv3d.train(*args, **kwargs)
     
     
     def eval(self, *args, **kwargs):
-        return self.conv2d.eval(*args, **kwargs)
+        return self.conv3d.eval(*args, **kwargs)
     
 
 class RBPooling(nn.Module):

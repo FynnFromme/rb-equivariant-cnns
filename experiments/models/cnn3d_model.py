@@ -1,11 +1,9 @@
-import numpy as np
 from torch import nn
 from torch import Tensor
 
 import experiments.models.model_utils as model_utils
 from collections import OrderedDict
 from typing import Callable
-from prettytable import PrettyTable
 
 from networks.cnn3d import RB3DConv, RBPooling, RBUpsampling
 

@@ -199,7 +199,7 @@ class RBSteerableConv(enn.EquivariantModule):
     
         batch_size = input_shape[0]
         
-        return (batch_size, self.out_type.size) + tuple(self.in_dims[:2])
+        return (batch_size, self.out_type.size) + tuple(self.out_dims[:2])
     
     
     def train(self, *args, **kwargs):
@@ -328,11 +328,10 @@ class RBPooling(enn.EquivariantModule):
         
         batch, _, in_width, in_depth = input_shape
         
-        out_height = self.in_height // self.v_kernel_size
         out_width = in_width // self.h_kernel_size
         out_depth = in_depth // self.h_kernel_size
         
-        return (batch, out_height*self.out_type.size, out_width, out_depth)
+        return (batch, self.out_type.size, out_width, out_depth)
 
 
 class RBUpsampling(enn.EquivariantModule):
@@ -418,8 +417,7 @@ class RBUpsampling(enn.EquivariantModule):
         
         batch, _, in_width, in_depth = input_shape
         
-        out_height = self.in_height * self.v_scale
         out_width = in_width * self.h_scale
         out_depth = in_depth * self.h_scale
         
-        return (batch, out_height*self.out_type.size, out_width, out_depth)
+        return (batch, self.out_type.size, out_width, out_depth)
