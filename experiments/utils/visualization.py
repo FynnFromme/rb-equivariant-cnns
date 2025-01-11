@@ -126,32 +126,32 @@ def auto_encoder_animation(model: torch.nn.Module,
 def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, num: int, channel: int, 
                          slice: int, axis: int, cols: int = 5, seed: int = 0):
     sensitivity_data = sensitivity_data.reshape(-1, *sensitivity_data.shape[-4:]) # flatten latent indices
-    
     random.seed(seed)
     latent_indices = random.sample(range(sensitivity_data.shape[0]), num)
     
-    imgs = []
+    imgs_data = []
     for latent_indx in latent_indices:
-        img = np.rot90(sensitivity_data[latent_indx, :, :, :, channel].take(indices=slice, axis=axis))
-        imgs.append(img)
+        data = np.rot90(sensitivity_data[latent_indx, :, :, :, channel].take(indices=slice, axis=axis))
+        imgs_data.append(data)
         
-    max_abs_value = max(np.abs(arr).max() for arr in imgs)
-    min_value = min(arr.min() for arr in imgs)
-    max_value = max(arr.max() for arr in imgs)
+    max_abs_value = max(np.abs(arr).max() for arr in imgs_data)
+    min_value = min(arr.min() for arr in imgs_data)
+    max_value = max(arr.max() for arr in imgs_data)
     img_extent = [0, 2*np.pi, 0, 2*np.pi] if axis == 2 else [0, 2*np.pi, 0, 2] # depending on whether looking from above
 
     fig = plt.figure(figsize=(20, 20))
     grid = ImageGrid(fig, 111,  # similar to subplot(111)
                     nrows_ncols=(math.ceil(num/cols), cols),  # creates 2x2 grid of Axes
                     axes_pad=0.1,  # pad between Axes in inch.
-                    cbar_mode='single'
-                    )
+                    cbar_mode='single')
 
-    for ax, im in zip(grid, imgs):
+    for ax, im_data in zip(grid, imgs_data):
         if abs_sensitivity:
-            ax.imshow(im, vmin=min_value, vmax=max_value, cmap='viridis', extent=img_extent)
+            im = ax.imshow(im_data, vmin=min_value, vmax=max_value, cmap='viridis', extent=img_extent)
         else:
-            ax.imshow(im, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
+            im = ax.imshow(im_data, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
         plt.axis('off')
-
+        
+    cbar = grid.cbar_axes[0].colorbar(im)
+    
     plt.show()
