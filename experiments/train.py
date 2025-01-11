@@ -29,7 +29,6 @@ parser.add_argument('-only_save_best', type=bool, default=True)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_train', type=int, default=-1)
 parser.add_argument('-n_valid', type=int, default=-1)
-parser.add_argument('-n_test', type=int, default=-1)
 parser.add_argument('-flips', type=bool, default=True)
 parser.add_argument('-rots', type=int, default=4)
 
@@ -72,19 +71,15 @@ N_train_avail, N_valid_avail, N_test_avail = data_reader.num_samples(sim_file, [
 # Reduce the amount of data manually
 N_TRAIN = args.n_train if args.n_train > 0 else N_train_avail
 N_VALID = args.n_valid if args.n_valid > 0 else N_valid_avail
-N_TEST = args.n_test if args.n_test > 0 else N_test_avail
 
 train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN)
 valid_dataset = data_reader.DataReader(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID)
-test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=True, samples=N_TEST)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
 valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
 
 print(f'Using {N_TRAIN}/{N_train_avail} training samples')
 print(f'Using {N_VALID}/{N_valid_avail} validation samples')
-print(f'Using {N_TEST}/{N_test_avail} testing samples')
 
 
 
@@ -125,9 +120,10 @@ match args.model:
         print(f'Selected Steerable CNN with {ROTS=}, {FLIPS=}')
         gspace = gspaces.flipRot2dOnR2 if FLIPS else gspaces.rot2dOnR2
         G_size = 2*ROTS if FLIPS else ROTS
+        encoder_channels = {(True, 4): (8, 16, 32, 64)}[(FLIPS, ROTS)]
         model = RBSteerableAutoencoder(gspace=gspace(N=ROTS),
                                     rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
-                                    encoder_channels=(8, 16, 32, 64),
+                                    encoder_channels=encoder_channels,
                                     latent_channels=32//G_size, # 32 // |G|
                                     v_kernel_size=V_KERNEL_SIZE, h_kernel_size=H_KERNEL_SIZE,
                                     drop_rate=DROP_RATE, nonlinearity=STEERABLE_NONLINEARITY) 
@@ -135,11 +131,12 @@ match args.model:
         print(f'Selected Steerable 3D CNN with {ROTS=}, {FLIPS=}')
         gspace = flipRot2dOnR3 if FLIPS else gspaces.rot2dOnR3
         G_size = 2*ROTS if FLIPS else ROTS
+        encoder_channels = {(True, 4): (24, 48, 96, 192)}[(FLIPS, ROTS)]
         model = RB3DSteerableAutoencoder(gspace=gspace(n=ROTS),
                                         rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
-                                        encoder_channels=(32, 64, 128, 256),
+                                        encoder_channels=encoder_channels,
                                         latent_channels=32//G_size,
-                                        kernel_size=H_KERNEL_SIZE,
+                                        kernel_size=V_KERNEL_SIZE,
                                         drop_rate=DROP_RATE, nonlinearity=STEERABLE_NONLINEARITY) 
     case 'CNN':
         print('Selected CNN')
