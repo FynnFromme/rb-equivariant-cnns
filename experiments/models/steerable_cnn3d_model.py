@@ -29,9 +29,9 @@ class _Steerable3DConvBlock(enn.SequentialModule):
         batch normalization and nonlinearity.
 
         Args:
-            gspace (GSpace): The group of transformations to be equivariant to. For `gspaces.flipRot2dOnR2(N)`
-                the block is equivariant to horizontal flips and rotations. Use `gspaces.rot2dOnR2(N)` for only
-                rotational equivariance.
+            gspace (GSpace): The group of transformations to be equivariant to. For 
+                `utils.flipRot2dOnR3.flipRot2dOnR3(N)` the block is equivariant to horizontal flips 
+                and rotations. Use `gspaces.rot2dOnR3(N)` for only rotational equivariance.
             in_fields (list[Representation]): The fields of the layer's input. This corresponds to input channels
                 in standard convolutions.
             out_fields (list[Representation]): The fields of the layer's output. This corresponds to output 
@@ -81,9 +81,9 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         """A Rayleigh-Bénard autoencoder based on 3D steerable convolutions with vertical parameter sharing.
 
         Args:
-            gspace (GSpace): The group of transformations to be equivariant to. For `gspaces.flipRot2dOnR2(N)`
-                the block is equivariant to horizontal flips and rotations. Use `gspaces.rot2dOnR2(N)` for only
-                rotational equivariance.
+            gspace (GSpace): The group of transformations to be equivariant to. For 
+                `utils.flipRot2dOnR3.flipRot2dOnR3(N)` the block is equivariant to horizontal flips 
+                and rotations. Use `gspaces.rot2dOnR3(N)` for only rotational equivariance.
             rb_dims (tuple): The spatial dimensions of the simulation data.
             encoder_channels (tuple): The channels of the encoder. Each entry results in a corresponding layer.
                 The decoder uses the channels in reversed order.
@@ -237,6 +237,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         
         return self._to_output_shape(output)
     
+    
     def forward_geometric(self, input: GeometricTensor) -> GeometricTensor:
         """Forwards the input through the network and returns the output. This method works with
         the GeometricTensor, which is internally used.
@@ -266,7 +267,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         
         input = GeometricTensor(input, self.encoder.in_type)
         latent = self.encoder(input)
-        output = output.tensor
+        latent = latent.tensor
         
         return self._to_latent_shape(latent)
     
@@ -366,7 +367,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         training = self.training
         self.eval()
         
-        x = torch.randn(3, self.in_dims[0], *self.in_dims[:2], 4)
+        x = torch.randn(3, self.in_dims[-1], *self.in_dims[:2], 4)
         x = self._from_input_shape(x)
         if gpu_device is not None: 
             x = x.to(gpu_device)

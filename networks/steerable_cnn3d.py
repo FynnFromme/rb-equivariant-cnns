@@ -35,9 +35,9 @@ class RBSteerable3DConv(enn.EquivariantModule):
         sharing) to match the interface of the other layers without vertical parameter sharing.
 
         Args:
-            gspace (GSpace): The group of transformations to be equivariant to. For `gspaces.flipRot2dOnR2(N)`
-                the layer is equivariant to horizontal flips and rotations. Use `gspaces.rot2dOnR2(N)` for only
-                rotational equivariance.
+            gspace (GSpace): The group of transformations to be equivariant to. For 
+                `utils.flipRot2dOnR3.flipRot2dOnR3(N)` the block is equivariant to horizontal flips 
+                and rotations. Use `gspaces.rot2dOnR3(N)` for only rotational equivariance.
             in_fields (list[Representation]): The fields of the layer's input. This corresponds to input channels
                 in standard convolutions.
             out_fields (list[Representation]): The fields of the layer's output. This corresponds to output 
@@ -85,13 +85,13 @@ class RBSteerable3DConv(enn.EquivariantModule):
         self.v_padding = 0, 0
         if v_pad_mode != 'valid':
             self.v_padding = network_utils.required_same_padding(in_dims[2], kernel_size, stride, 
-                                                         dilation=dilation, split=True)
+                                                                 dilation=dilation, split=True)
         
         out_height = network_utils.conv_output_size(in_dims[-1], kernel_size, stride, dilation=dilation, 
-                                            pad=v_pad_mode!='valid')
+                                                    pad=v_pad_mode!='valid')
 
 
-        in_type = FieldType(gspace, in_fields) # concatenated neighborhoods
+        in_type = FieldType(gspace, in_fields)
         out_type = FieldType(gspace, out_fields)
 
         self.r3conv = enn.R3Conv(in_type=in_type, 
@@ -133,12 +133,10 @@ class RBSteerable3DConv(enn.EquivariantModule):
             GeometricTensor: The output of the convolution.
         """
         assert input.type == self.in_type
-        
-        input_tensor = input.tensor
-        
+         
         # vertical padding (horizontal padding is done by conv operation)
+        input_tensor = input.tensor
         input_tensor = F.pad(input_tensor, (0, 0, 0, 0, *self.v_padding), 'constant', 0)
-        
         input = GeometricTensor(input_tensor, self.in_type)
         
         return self.r3conv.forward(input)
@@ -180,7 +178,7 @@ class RBSteerable3DConv(enn.EquivariantModule):
         training = self.training
         self.eval()
     
-        x = torch.randn(3, self.in_type.size, self.in_dims[0], *self.in_dims[:2])
+        x = torch.randn(3, self.in_type.size, self.in_dims[-1], *self.in_dims[:2])
         x = GeometricTensor(x, self.in_type)
         
         errors = []

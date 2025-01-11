@@ -275,7 +275,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         
         input = GeometricTensor(input, self.encoder.in_type)
         latent = self.encoder(input)
-        output = output.tensor
+        latent = latent.tensor
         
         return self._to_latent_shape(latent)
     
@@ -338,8 +338,8 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
             Tensor: Transformed tensor of shape [batch, width, depth, height, sum(fieldsizes)]
         """
         b = tensor.shape[0]
-        c, w, d, h = self.latent_shape
-        return tensor.reshape(b, h, c, w, d).permute(0, 3, 4, 1, 2)
+        c, t, w, d, h = self.latent_shape
+        return tensor.reshape(b, h, c*t, w, d).permute(0, 3, 4, 1, 2)
     
     
     def _from_latent_shape(self, tensor: Tensor) -> Tensor:
@@ -352,8 +352,8 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         Returns:
             Tensor: Transformed tensor of shape [batch, height*sum(fieldsizes), width, depth]
         """
-        b, w, d, h, c = tensor.shape
-        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
+        b, w, d, h, ct = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*ct, w, d)
     
     
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:
