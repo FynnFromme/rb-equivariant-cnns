@@ -108,7 +108,7 @@ def train(model: torch.nn.Module,
         
         print(f'Best epoch is epoch {best_epoch} with a validation loss of {best_loss}.')
         print(f'Trained model is saved in {output_dir}')
-        print(f'A log of both training and validation log is saved in {log_file}')
+        print(f'A log of both training and validation loss is saved in {log_file}')
             
     writer.flush()
     writer.close()
@@ -187,7 +187,7 @@ def save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_valu
         log_dict = {'train_loss': train_loss_values, 
                     'valid_loss': valid_loss_values,
                     'epoch_duration': epoch_duration_values}
-        json.dump(log_dict, f)
+        json.dump(log_dict, f, indent=4)
     
 
 def load_trained_model(model, optimizer, models_dir, model_name, train_name, epoch=-1):
