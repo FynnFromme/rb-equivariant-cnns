@@ -26,6 +26,7 @@ parser = ArgumentParser()
 parser.add_argument('model_name', type=str)
 parser.add_argument('train_name', type=str)
 parser.add_argument('-eval_performance', action='store_true', default=False)
+parser.add_argument('-eval_performance_per_sim', action='store_true', default=False)
 parser.add_argument('-check_equivariance', action='store_true', default=False)
 parser.add_argument('-animate', action='store_true', default=False)
 parser.add_argument('-compute_latent_sensitivity', action='store_true', default=False)
@@ -37,10 +38,15 @@ parser.add_argument('-batch_size', type=int, default=64)
 
 args = parser.parse_args()
 
-if not (args.eval_performance or args.check_equivariance or args.animate or args.compute_latent_sensitivity):
+if not any([args.eval_performance, 
+            args.eval_performance_per_sim,
+            args.check_equivariance, 
+            args.animate, 
+            args.compute_latent_sensitivity]):
     print('No evaluation selected')
     print('Please add at least one of the following flags:')
     print('-eval_performance')
+    print('-eval_performance_per_sim')
     print('-check_equivariance')
     print('-animate')
     print('-compute_latent_sensitivity')
@@ -76,7 +82,7 @@ N_test_avail = data_reader.num_samples(sim_file, 'test')
 # Reduce the amount of data manually
 N_TEST = min(args.n_test, N_test_avail) if args.n_test > 0 else N_test_avail
 
-test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=True, samples=N_TEST)
+test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
 
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
 
@@ -103,6 +109,7 @@ os.makedirs(results_dir, exist_ok=True)
 if args.eval_performance:
     print('Evaluating model performance...')
     
+    # read current performances
     json_file = os.path.join(results_dir, 'performance.json')
     if os.path.isfile(json_file):
         with open(json_file, 'r') as f:
@@ -110,6 +117,7 @@ if args.eval_performance:
     else:
         performance = {}
     
+    # update new performance metrics but keep other contents
     performance['mse'] = compute_test_loss(model, test_loader, torch.nn.MSELoss(), N_TEST, args.batch_size)
     performance['rmse'] = np.sqrt(performance['mse'])
     performance['mae'] = compute_test_loss(model, test_loader, torch.nn.L1Loss(), N_TEST, args.batch_size)
@@ -118,8 +126,40 @@ if args.eval_performance:
     print(f'RMSE={performance["rmse"]:.4f}')
     print(f'MAE={performance["mae"]:.4f}')
     
+    # update performances in file
     with open(json_file, 'w+') as f:
         json.dump(performance, f, indent=4)
+        
+        
+if args.eval_performance_per_sim:
+    print('Evaluating model performance per simulation...')
+    
+    # read current simulation performances
+    json_file = os.path.join(results_dir, 'performance_per_sim.json')
+    if os.path.isfile(json_file):
+        with open(json_file, 'r') as f:
+            sim_performances = json.load(f)
+    else:
+        sim_performances = {'mse': [], 'rmse': [], 'mae': []}
+    
+    # update new performance metrics but keep other contents
+    for i, sim_dataset in enumerate(test_dataset.iterate_simulations(), 1):
+        print(f'Evaluating model performance for simulation {i}...')
+        sim_loader = DataLoader(sim_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
+        
+        mse = compute_test_loss(model, sim_loader, torch.nn.MSELoss(), sim_dataset.num_samples, args.batch_size)
+        rmse = np.sqrt(mse)
+        mae = compute_test_loss(model, sim_loader, torch.nn.L1Loss(), sim_dataset.num_samples, args.batch_size)
+        
+        sim_performances['mse'].append(mse)
+        sim_performances['rmse'].append(rmse)
+        sim_performances['mae'].append(mae)
+
+    print(sim_performances)
+    
+    # update performances in file
+    with open(json_file, 'w+') as f:
+        json.dump(sim_performances, f, indent=4)
 
 
 if args.check_equivariance:

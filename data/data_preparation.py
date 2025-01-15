@@ -87,7 +87,7 @@ class DataPreparation:
         N_valid = snapshots_per_file*len(valid_files)
         N_test = snapshots_per_file*len(test_files)
         
-        datafile = self._create_h5_datasets(simulation_name, N_train, N_valid, N_test, dims) # output h5 file
+        datafile = self._create_h5_datasets(simulation_name, N_train, N_valid, N_test, snapshots_per_file, dims) # output h5 file
         
         scaler = self._fit_scaler(files, transform_args) # can be used to standardize data
         self._save_scaler(scaler, datafile, dims) # to be able to unstandardize data later (e.g. for visualization)
@@ -278,7 +278,7 @@ class DataPreparation:
         
         
     def _create_h5_datasets(self, simulation_name: str, N_train: int, N_valid: int, 
-                            N_test: int, dims: tuple) -> h5py.File:
+                            N_test: int, snapshots_per_file: int, dims: tuple) -> h5py.File:
         """Creates a .h5 file for the output and initializes empty datasets for the train, validation
         and test sets.
 
@@ -287,6 +287,7 @@ class DataPreparation:
             N_train (int): The number of training snapshots.
             N_valid (int): The number of validaiton snapshots.
             N_test (int): The number of testing snapshots.
+            snapshots_per_file (int): The number of snapshots per file.
             dims (tuple): The spatial dimensions of the simulation data.
 
         Returns:
@@ -304,6 +305,9 @@ class DataPreparation:
         train_data.attrs['N'] = N_train
         valid_data.attrs['N'] = N_valid
         test_data.attrs['N'] = N_test
+        train_data.attrs['N_per_sim'] = snapshots_per_file
+        valid_data.attrs['N_per_sim'] = snapshots_per_file
+        test_data.attrs['N_per_sim'] = snapshots_per_file
         
         return datafile
 

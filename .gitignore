@@ -3,7 +3,7 @@ data/datasets/*
 experiments/animations/*
 experiments/runs/*
 experiments/trained_models/*
-experiments/results/latent_sensitivity/*
+experiments/results/*/*/latent_sensitivity.pt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
