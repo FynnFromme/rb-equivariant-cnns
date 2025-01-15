@@ -88,10 +88,16 @@ def auto_encoder_animation(model: torch.nn.Module,
     cax = divider.append_axes('right', size='5%', pad=0.05)
     fig.colorbar(diff_im, cax=cax, orientation='vertical')
 
+    last_frame = 0
     def frame_updater(frame):
         """Computes the next frame of the animation."""
-        nonlocal batch_x, batch_y, batch_x_stand, batch_y_stand, in_batch_frame
-        in_batch_frame += 1
+        nonlocal batch_x, batch_y, batch_x_stand, batch_y_stand, in_batch_frame, last_frame
+        if frame <= last_frame:
+            # no new frame
+            return orig_im, pred_im
+        
+        in_batch_frame +=1
+        last_frame = frame
 
         if in_batch_frame >= batch_size:
             in_batch_frame = 0
@@ -115,7 +121,6 @@ def auto_encoder_animation(model: torch.nn.Module,
         return orig_im, pred_im
     
     frames = min(num_samples(sim_file, dataset), frames)
-    
     anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
     
     os.makedirs(anim_dir, exist_ok=True)
@@ -150,7 +155,7 @@ def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, nu
             im = ax.imshow(im_data, vmin=min_value, vmax=max_value, cmap='viridis', extent=img_extent)
         else:
             im = ax.imshow(im_data, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
-        plt.axis('off')
+        ax.axis('off')
         
     cbar = grid.cbar_axes[0].colorbar(im)
     
