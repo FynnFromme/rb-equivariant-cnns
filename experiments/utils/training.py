@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 
 from .data_augmentation import DataAugmentation
+from .build_model import build_model
 
 
 def train(model: torch.nn.Module, 
@@ -78,7 +79,6 @@ def train(model: torch.nn.Module,
             train_loss_values.append(train_loss)
             valid_loss_values.append(valid_loss)
             epoch_duration_values.append(epoch_duration)
-            save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values)
             
             if use_lr_scheduler:
                 lr_scheduler.step()
@@ -99,6 +99,9 @@ def train(model: torch.nn.Module,
                 save_checkpoint(output_file, best_weights, best_optim, early_stop_count)
             else:
                 early_stop_count += 1
+                
+            save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values,
+                     best_epoch, best_loss)
             
             if early_stop_count >= early_stopping:
                 print(f'Early stopping at epoch {epoch}.')
@@ -182,15 +185,18 @@ def save_checkpoint(path, weights, optimizer_state, early_stop_count):
     }, path)
     
     
-def save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values):
+def save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values, 
+             best_epoch, best_loss):
     with open(log_file, 'w+') as f:
         log_dict = {'train_loss': train_loss_values, 
                     'valid_loss': valid_loss_values,
-                    'epoch_duration': epoch_duration_values}
+                    'epoch_duration': epoch_duration_values,
+                    'best_epoch': best_epoch,
+                    'best_valid_loss': best_loss}
         json.dump(log_dict, f, indent=4)
     
 
-def load_trained_model(model, optimizer, models_dir, model_name, train_name, epoch=-1):
+def load_trained_model(model, models_dir, model_name, train_name, optimizer=None, epoch=-1):
     directory = os.path.join(models_dir, model_name, train_name)
     
     if epoch == 0:
@@ -213,13 +219,25 @@ def load_trained_model(model, optimizer, models_dir, model_name, train_name, epo
     
     checkpoint = torch.load(file_path)
     model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if optimizer: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     early_stop_count = checkpoint['early_stop_count']
     model.eval()
     
     print(f"Loaded state at epoch {epoch} with an early stop count of {early_stop_count}.")
     
     return early_stop_count, epoch
+
+
+def build_and_load_trained_model(models_dir: str, model_name: str, train_name: str, epoch: int = -1):
+    train_dir = os.path.join(models_dir, model_name, train_name)
+    
+    with open(os.path.join(train_dir, 'hyperparameters.json'), 'r') as f:
+        hyperparameters = json.load(f)
+        
+    model = build_model(**hyperparameters)
+    early_stop_count, epoch = load_trained_model(model, models_dir, model_name, train_name, 
+                                                 epoch=epoch, optimizer=None)
+    return model, early_stop_count, epoch
     
     
 def remove_saved_models(directory):

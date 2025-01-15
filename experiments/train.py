@@ -10,7 +10,6 @@ from utils.data_augmentation import DataAugmentation
 from torch.utils.data import DataLoader
 from utils import training
 
-import escnn
 from escnn import gspaces
 
 from argparse import ArgumentParser
@@ -71,8 +70,8 @@ sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{SIMULATION_
 N_train_avail, N_valid_avail, N_test_avail = data_reader.num_samples(sim_file, ['train', 'valid', 'test'])
 
 # Reduce the amount of data manually
-N_TRAIN = args.n_train if args.n_train > 0 else N_train_avail
-N_VALID = args.n_valid if args.n_valid > 0 else N_valid_avail
+N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
+N_VALID = min(args.n_valid, N_valid_avail) if args.n_valid > 0 else N_valid_avail
 
 train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN)
 valid_dataset = data_reader.DataReader(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID)
@@ -91,7 +90,7 @@ print(f'Using {N_VALID}/{N_valid_avail} validation samples')
 
 H_KERNEL_SIZE, V_KERNEL_SIZE = 3, 5
 DROP_RATE = 0.2
-NONLINEARITY, STEERABLE_NONLINEARITY = torch.nn.ELU, escnn.nn.ELU
+NONLINEARITY = 'ELU'
 
 LEARNING_RATE = args.lr
 LR_DECAY = 0.1
@@ -107,12 +106,7 @@ OPTIMIZER = torch.optim.Adam
 # Building Model
 ########################
 print('Building model...')
-from models.steerable_cnn_model import RBSteerableAutoencoder
-from models.steerable_cnn3d_model import RB3DSteerableAutoencoder
-from models.cnn_model import RBAutoencoder
-from models.cnn3d_model import RB3DAutoencoder
-
-from utils.flipRot2dOnR3 import flipRot2dOnR3
+from utils.build_model import build_model
 
 
 FLIPS, ROTS = args.flips, args.rots
@@ -120,57 +114,44 @@ LATENT_CHANNELS = 32
 match args.model:
     case 'steerableCNN':
         print(f'Selected Steerable CNN with {ROTS=}, {FLIPS=}')
-        gspace = gspaces.flipRot2dOnR2 if FLIPS else gspaces.rot2dOnR2
-        G_size = 2*ROTS if FLIPS else ROTS
         encoder_channels = {(True, 4): (8, 16, 32, 64)}[(FLIPS, ROTS)]
-        model = RBSteerableAutoencoder(gspace=gspace(N=ROTS),
-                                    rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
-                                    encoder_channels=encoder_channels,
-                                    latent_channels=LATENT_CHANNELS//G_size,
-                                    v_kernel_size=V_KERNEL_SIZE, h_kernel_size=H_KERNEL_SIZE,
-                                    drop_rate=DROP_RATE, nonlinearity=STEERABLE_NONLINEARITY)
     case 'steerable3DCNN':
         print(f'Selected Steerable 3D CNN with {ROTS=}, {FLIPS=}')
-        gspace = flipRot2dOnR3 if FLIPS else gspaces.rot2dOnR3
-        G_size = 2*ROTS if FLIPS else ROTS
         encoder_channels = {(True, 4): (24, 48, 96, 192)}[(FLIPS, ROTS)]
-        model = RB3DSteerableAutoencoder(gspace=gspace(n=ROTS),
-                                        rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
-                                        encoder_channels=encoder_channels,
-                                        latent_channels=LATENT_CHANNELS//G_size,
-                                        kernel_size=V_KERNEL_SIZE,
-                                        drop_rate=DROP_RATE, nonlinearity=STEERABLE_NONLINEARITY) 
     case 'CNN':
         print('Selected CNN')
         encoder_channels = (16, 32, 66, 160)
-        model = RBAutoencoder(rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
-                            encoder_channels=encoder_channels,
-                            latent_channels=LATENT_CHANNELS,
-                            v_kernel_size=V_KERNEL_SIZE, h_kernel_size=H_KERNEL_SIZE,
-                            drop_rate=DROP_RATE, nonlinearity=NONLINEARITY)
     case '3DCNN':
         print('Selected 3DCNN')
         encoder_channels = (40, 80, 168, 320)
-        model = RB3DAutoencoder(rb_dims=(HORIZONTAL_SIZE, HORIZONTAL_SIZE, HEIGHT),
-                                encoder_channels=encoder_channels,
-                                latent_channels=LATENT_CHANNELS,
-                                v_kernel_size=V_KERNEL_SIZE, h_kernel_size=H_KERNEL_SIZE,
-                                drop_rate=DROP_RATE, nonlinearity=NONLINEARITY)
+
+model_hyperparameters = {
+    'model_type': args.model,
+    'simulation_name': SIMULATION_NAME,
+    'h_kernel_size': H_KERNEL_SIZE,
+    'v_kernel_size': V_KERNEL_SIZE,
+    'drop_rate': DROP_RATE,
+    'nonlinearity': NONLINEARITY,
+    'flips': FLIPS,
+    'rots': ROTS,
+    'encoder_channels': encoder_channels,
+    'latent_channels': LATENT_CHANNELS,
+}
+
+model = build_model(**model_hyperparameters)
 
 model.to(DEVICE)
 model.summary()
-
-
 
 ########################
 # Prepare Training
 ########################
 
 models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
-model_name = {RBSteerableAutoencoder: f'{"D" if FLIPS else "C"}{ROTS}cnn',
-              RB3DSteerableAutoencoder: f'3D-{"D" if FLIPS else "C"}{ROTS}cnn',
-              RBAutoencoder: 'cnn',
-              RB3DAutoencoder: '3Dcnn'}[model.__class__]
+model_name = {'steerableCNN': f'{"D" if FLIPS else "C"}{ROTS}cnn',
+              'steerable3DCNN': f'3D-{"D" if FLIPS else "C"}{ROTS}cnn',
+              'CNN': 'cnn',
+              '3DCNN': '3Dcnn'}[args.model]
 train_name = args.train_name
 train_dir = os.path.join(models_dir, model_name, train_name)
 os.makedirs(train_dir, exist_ok=True)
@@ -200,16 +181,10 @@ EPOCHS = args.epochs - loaded_epoch if args.including_loaded_epochs else args.ep
 # Save Hyperparameters
 ########################
 
-hyperparameters = {
+train_hyperparameters = {
     'batch_size': BATCH_SIZE,
-    'simulation_name': SIMULATION_NAME,
     'n_train': N_TRAIN,
     'n_valid': N_VALID,
-    'h_kernel_size': H_KERNEL_SIZE,
-    'v_kernel_size': V_KERNEL_SIZE,
-    'drop_rate': DROP_RATE,
-    'nonlinearity': str(NONLINEARITY),
-    'steerable_nonlinearity': str(STEERABLE_NONLINEARITY),
     'learning_rate': LEARNING_RATE,
     'lr_decay': LR_DECAY,
     'lr_decay_epochs': LR_DECAY_EPOCHS,
@@ -217,12 +192,10 @@ hyperparameters = {
     'weight_decay': WEIGHT_DECAY,
     'early_stopping': EARLY_STOPPING,
     'optimizer': str(OPTIMIZER),
-    'flips': FLIPS,
-    'rots': ROTS,
-    'encoder_channels': encoder_channels,
-    'latent_channels': LATENT_CHANNELS,
     'epochs': loaded_epoch+EPOCHS
 }
+
+hyperparameters = model_hyperparameters | train_hyperparameters
 
 with open(os.path.join(train_dir, 'hyperparameters.json'), 'w+') as f:
     json.dump(hyperparameters, f, indent=4)
