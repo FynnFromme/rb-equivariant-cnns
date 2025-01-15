@@ -77,10 +77,13 @@ else:
 ########################
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{args.simulation_name}.h5')
-N_test_avail = data_reader.num_samples(sim_file, 'test')
+N_test_avail, N_train_avail = data_reader.num_samples(sim_file, ['test', 'train'])
 N_TEST = min(args.n_test, N_test_avail) if args.n_test > 0 else N_test_avail
+N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
 test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
+train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN)
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
+train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
 
 print(f'Using {N_TEST}/{N_test_avail} testing samples')
 
@@ -129,10 +132,18 @@ if args.eval_performance:
     performance['mse'] = compute_test_loss(model, test_loader, torch.nn.MSELoss(), N_TEST, args.batch_size)
     performance['rmse'] = np.sqrt(performance['mse'])
     performance['mae'] = compute_test_loss(model, test_loader, torch.nn.L1Loss(), N_TEST, args.batch_size)
+    
+    performance['mse_train'] = compute_test_loss(model, train_loader, torch.nn.MSELoss(), N_TRAIN, args.batch_size)
+    performance['rmse_train'] = np.sqrt(performance['mse'])
+    performance['mae_train'] = compute_test_loss(model, train_loader, torch.nn.L1Loss(), N_TRAIN, args.batch_size)
 
     print(f'MSE={performance["mse"]:.4f}')
     print(f'RMSE={performance["rmse"]:.4f}')
     print(f'MAE={performance["mae"]:.4f}')
+    
+    print(f'MSE_train={performance["mse_train"]:.4f}')
+    print(f'RMSE_train={performance["rmse_train"]:.4f}')
+    print(f'MAE_train={performance["mae_train"]:.4f}')
     
     # update performances in file
     save_json(performance, performance_file)
