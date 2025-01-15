@@ -26,14 +26,15 @@ def compute_test_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fn, 
     return avg_test_loss
 
 
-def compute_latent_sensitivity(model: torch.nn.Module, dataset: DataReader, samples: int = None, save_dir: str = None, filename: str = None):
+def compute_latent_sensitivity(model: torch.nn.Module, dataset: DataReader, samples: int = None, 
+                               save_dir: str = None, filename: str = None):
     dataloader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
 
     model.eval()
     aggregated_jacobian = None
     aggregated_jacobian_abs = None
     
-    total_samples = 0
+    n = 0
     try:
         for batch, _ in tqdm(dataloader, total=samples):
             # Compute the Jacobian for the current batch
@@ -51,23 +52,24 @@ def compute_latent_sensitivity(model: torch.nn.Module, dataset: DataReader, samp
             aggregated_jacobian += jacobian_batch
             aggregated_jacobian_abs += jacobian_batch.abs()
             
-            total_samples += 1
+            n += 1
             
-            if samples is not None and total_samples >= samples:
+            if samples is not None and n >= samples:
                 break
     except KeyboardInterrupt as e:
         raise e
     finally:
         # Average over all test samples
-        average_jacobian = aggregated_jacobian.cpu().detach().numpy() / total_samples
-        average_jacobian_abs = aggregated_jacobian_abs.cpu().detach().numpy() / total_samples
+        average_jacobian = aggregated_jacobian.cpu().detach().numpy() / n
+        average_jacobian_abs = aggregated_jacobian_abs.cpu().detach().numpy() / n
         
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
             if filename is None:
                 filename = 'latent_sensitivity'
             torch.save({'avg_sensitivity': average_jacobian,
-                        'avg_abs_sensitivity': average_jacobian_abs},
+                        'avg_abs_sensitivity': average_jacobian_abs,
+                        'n': n},
                         os.path.join(save_dir, filename+'.pt'))
 
     return average_jacobian, average_jacobian_abs
@@ -75,4 +77,4 @@ def compute_latent_sensitivity(model: torch.nn.Module, dataset: DataReader, samp
 
 def load_latent_sensitivity(save_dir: str, filename: str):
     sensitivity_data = torch.load(os.path.join(save_dir, filename+'.pt'))
-    return sensitivity_data['avg_sensitivity'], sensitivity_data['avg_abs_sensitivity']
+    return sensitivity_data['avg_sensitivity'], sensitivity_data['avg_abs_sensitivity'], sensitivity_data['n']

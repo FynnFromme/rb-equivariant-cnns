@@ -52,6 +52,7 @@ if not any([args.eval_performance,
     print('-compute_latent_sensitivity')
     exit()
 
+
 ########################
 # Seed and GPU
 ########################
@@ -76,17 +77,13 @@ else:
 ########################
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{args.simulation_name}.h5')
-
 N_test_avail = data_reader.num_samples(sim_file, 'test')
-
-# Reduce the amount of data manually
 N_TEST = min(args.n_test, N_test_avail) if args.n_test > 0 else N_test_avail
-
 test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
-
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
 
 print(f'Using {N_TEST}/{N_test_avail} testing samples')
+
 
 
 ########################
@@ -96,26 +93,37 @@ print(f'Using {N_TEST}/{N_test_avail} testing samples')
 from utils.training import build_and_load_trained_model
 models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 
-model, *_ = build_and_load_trained_model(models_dir, args.model_name, args.train_name, epoch=-1)
+model = build_and_load_trained_model(models_dir, args.model_name, args.train_name, epoch=-1)
 model.to(DEVICE) 
+   
+   
    
 ########################
 # Evaluate Model
-########################     
+########################  
+
+def load_json(json_file):
+    if os.path.isfile(json_file):
+        with open(json_file, 'r') as f:
+            return json.load(f)
+    else:
+        return {}   
+    
+def save_json(dict, json_file):
+    with open(json_file, 'w+') as f:
+        json.dump(dict, f, indent=4)
 
 results_dir = os.path.join(EXPERIMENT_DIR, 'results', args.model_name, args.train_name)
 os.makedirs(results_dir, exist_ok=True)
+
+
 
 if args.eval_performance:
     print('Evaluating model performance...')
     
     # read current performances
-    json_file = os.path.join(results_dir, 'performance.json')
-    if os.path.isfile(json_file):
-        with open(json_file, 'r') as f:
-            performance = json.load(f)
-    else:
-        performance = {}
+    performance_file = os.path.join(results_dir, 'performance.json')
+    performance = load_json(performance_file)
     
     # update new performance metrics but keep other contents
     performance['mse'] = compute_test_loss(model, test_loader, torch.nn.MSELoss(), N_TEST, args.batch_size)
@@ -127,20 +135,17 @@ if args.eval_performance:
     print(f'MAE={performance["mae"]:.4f}')
     
     # update performances in file
-    with open(json_file, 'w+') as f:
-        json.dump(performance, f, indent=4)
+    save_json(performance, performance_file)
+        
         
         
 if args.eval_performance_per_sim:
     print('Evaluating model performance per simulation...')
     
     # read current simulation performances
-    json_file = os.path.join(results_dir, 'performance_per_sim.json')
-    if os.path.isfile(json_file):
-        with open(json_file, 'r') as f:
-            sim_performances = json.load(f)
-    else:
-        sim_performances = {'mse': [], 'rmse': [], 'mae': []}
+    sim_performances_file = os.path.join(results_dir, 'performance_per_sim.json')
+    sim_performances = load_json(sim_performances_file)
+    sim_performances = sim_performances | {'mse': [], 'rmse': [], 'mae': []}
     
     # update new performance metrics but keep other contents
     for i, sim_dataset in enumerate(test_dataset.iterate_simulations(), 1):
@@ -158,17 +163,19 @@ if args.eval_performance_per_sim:
     print(sim_performances)
     
     # update performances in file
-    with open(json_file, 'w+') as f:
-        json.dump(sim_performances, f, indent=4)
+    save_json(sim_performances, sim_performances_file)
+
 
 
 if args.check_equivariance:
+    # TODO save to file
     if isinstance(model, escnn.nn.EquivariantModule):
         print('Checking Equivariance...')
         model.check_equivariance(gpu_device=DEVICE, atol=1e-3) 
     else:
         # TODO implement computation of equivariance error for other models
         print('Equivariance can currently only be checked for steerable models.')
+        
         
         
 if args.animate:

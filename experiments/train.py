@@ -106,7 +106,7 @@ OPTIMIZER = torch.optim.Adam
 # Building Model
 ########################
 print('Building model...')
-from utils.build_model import build_model
+from experiments.utils.model_building import build_model
 
 
 FLIPS, ROTS = args.flips, args.rots

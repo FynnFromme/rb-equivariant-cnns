@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 
 from .data_augmentation import DataAugmentation
-from .build_model import build_model
+from .model_building import build_model
 
 
 def train(model: torch.nn.Module, 
@@ -235,9 +235,9 @@ def build_and_load_trained_model(models_dir: str, model_name: str, train_name: s
         hyperparameters = json.load(f)
         
     model = build_model(**hyperparameters)
-    early_stop_count, epoch = load_trained_model(model, models_dir, model_name, train_name, 
-                                                 epoch=epoch, optimizer=None)
-    return model, early_stop_count, epoch
+    # load weights into the model (changes the model itself)
+    load_trained_model(model, models_dir, model_name, train_name, epoch=epoch, optimizer=None)
+    return model
     
     
 def remove_saved_models(directory):

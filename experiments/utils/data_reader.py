@@ -63,7 +63,7 @@ class DataReader(IterableDataset):
     def iterate_simulations(self) -> Generator['DataReader', None, None]:
         """Yields DataReaders that are sliced to the data windows of the respective simulations."""
         sim_start_indices = range(0, self.total_num_samples, self.num_samples_per_sim)
-        sim_end_indices = range(self.num_samples_per_sim, self.total_num_samples, self.num_samples_per_sim)
+        sim_end_indices = range(self.num_samples_per_sim, self.total_num_samples+1, self.num_samples_per_sim)
         
         for start, end in zip(sim_start_indices, sim_end_indices):
             yield DataReader(self.sim_file, self.dataset, self.device, self.num_samples,
