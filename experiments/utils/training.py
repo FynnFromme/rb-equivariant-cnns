@@ -40,7 +40,8 @@ def train(model: torch.nn.Module,
           batch_size: int,
           data_augmentation: DataAugmentation, 
           plot: bool,
-          initial_early_stop_count: int = 0):
+          initial_early_stop_count: int = 0,
+          train_loss_in_eval: bool = False):
     
     tb_dir = os.path.join(os.path.dirname(os.path.abspath(models_dir)), 'runs')
     writer = SummaryWriter(os.path.join(tb_dir, model_name, train_name)) # Tensorboard writer
@@ -56,7 +57,7 @@ def train(model: torch.nn.Module,
         valid_loss_values = []
         epoch_duration_values = []
     else:
-        best_loss = compute_validation_loss(valid_loader, model, loss_fn)
+        best_loss = compute_loss(valid_loader, model, loss_fn)
         best_epoch = start_epoch
         with open(log_file, 'r') as f:
             log_dict = json.load(f)
@@ -70,7 +71,8 @@ def train(model: torch.nn.Module,
         for epoch in range(1+start_epoch, 1+start_epoch+epochs):
             epoch_start = time.time()
             train_loss, valid_loss = train_epoch(train_loader, valid_loader, model, loss_fn, optimizer, 
-                                                data_augmentation, epoch, batch_size, train_samples)
+                                                data_augmentation, epoch, batch_size, train_samples,
+                                                train_loss_in_eval)
             epoch_duration = time.time() - epoch_start
             pbar.update(1)
             
@@ -136,7 +138,8 @@ def train_epoch(train_loader: DataLoader,
                 data_augmentation: DataAugmentation, 
                 epochnum: int, 
                 batch_size: int, 
-                samples: int):
+                samples: int,
+                train_loss_in_eval: bool = False):
     model.train()
     running_loss = 0.0
     
@@ -158,15 +161,18 @@ def train_epoch(train_loader: DataLoader,
             pbar.set_postfix_str(f'train_loss={running_loss/i:.4f}')
             pbar.update(1)
             
-        train_loss = running_loss / i
-        valid_loss = compute_validation_loss(valid_loader, model, loss_fn)
+        if train_loss_in_eval:
+            train_loss = compute_loss(train_loader, model, loss_fn)
+        else:
+            train_loss = running_loss / i
+        valid_loss = compute_loss(valid_loader, model, loss_fn)
         
         pbar.set_postfix_str(f'{train_loss=:.4f}, {valid_loss=:.4f}')
     
     return train_loss, valid_loss
 
 
-def compute_validation_loss(dataloader: DataLoader, model: torch.nn.Module, loss_fn):
+def compute_loss(dataloader: DataLoader, model: torch.nn.Module, loss_fn):
     model.eval()
     valid_loss = 0.0
     with torch.no_grad(): # Ensures that no gradients are computed during test mode

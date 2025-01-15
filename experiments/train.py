@@ -26,6 +26,7 @@ parser.add_argument('train_name', type=str)
 parser.add_argument('-start_epoch', type=int, default=-1)
 parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
 parser.add_argument('-only_save_best', type=bool, default=True)
+parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_train', type=int, default=-1)
 parser.add_argument('-n_valid', type=int, default=-1)
@@ -208,4 +209,4 @@ training.train(model=model, models_dir=models_dir, model_name=model_name, train_
                epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, 
                optimizer=optimizer, lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, train_samples=N_TRAIN, 
                batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
-               initial_early_stop_count=initial_early_stop_count)
+               initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval)
