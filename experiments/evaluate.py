@@ -7,7 +7,7 @@ EXPERIMENT_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
 from utils import data_reader
-from utils.evaluation import compute_test_loss
+from utils.evaluation import compute_loss
 from utils.visualization import auto_encoder_animation
 from utils.evaluation import compute_latent_sensitivity
 
@@ -129,13 +129,15 @@ if args.eval_performance:
     performance = load_json(performance_file)
     
     # update new performance metrics but keep other contents
-    performance['mse'] = compute_test_loss(model, test_loader, torch.nn.MSELoss(), N_TEST, args.batch_size)
+    performance['mse'], performance['mae'] = compute_loss(model, test_loader,
+                                                          [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                          N_TEST, args.batch_size)
     performance['rmse'] = np.sqrt(performance['mse'])
-    performance['mae'] = compute_test_loss(model, test_loader, torch.nn.L1Loss(), N_TEST, args.batch_size)
     
-    performance['mse_train'] = compute_test_loss(model, train_loader, torch.nn.MSELoss(), N_TRAIN, args.batch_size)
-    performance['rmse_train'] = np.sqrt(performance['mse'])
-    performance['mae_train'] = compute_test_loss(model, train_loader, torch.nn.L1Loss(), N_TRAIN, args.batch_size)
+    performance['mse_train'], performance['mae_train'] = compute_loss(model, train_loader,
+                                                                      [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                                      N_TRAIN, args.batch_size)
+    performance['rmse_train'] = np.sqrt(performance['mse_train'])
 
     print(f'MSE={performance["mse"]:.4f}')
     print(f'RMSE={performance["rmse"]:.4f}')
@@ -163,9 +165,10 @@ if args.eval_performance_per_sim:
         print(f'Evaluating model performance for simulation {i}...')
         sim_loader = DataLoader(sim_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
         
-        mse = compute_test_loss(model, sim_loader, torch.nn.MSELoss(), sim_dataset.num_samples, args.batch_size)
+        mse, mae = compute_loss(model, sim_loader,
+                                [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                sim_dataset.num_samples, args.batch_size)
         rmse = np.sqrt(mse)
-        mae = compute_test_loss(model, sim_loader, torch.nn.L1Loss(), sim_dataset.num_samples, args.batch_size)
         
         sim_performances['mse'].append(mse)
         sim_performances['rmse'].append(rmse)

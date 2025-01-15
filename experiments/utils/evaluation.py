@@ -3,27 +3,34 @@ import torch
 from torch.utils.data import DataLoader
 from utils.data_reader import DataReader
 from tqdm.auto import tqdm
+from collections import Iterable
 
 import os
 
-def compute_test_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fn, samples: int = None, batch_size: int = None):
+def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
+                      samples: int = None, batch_size: int = None):
     model.eval()
 
+    multiple_losses = isinstance(loss_fns, Iterable)
+    if not multiple_losses:
+        loss_fns = [loss_fns]
+        
     batches = None
     if samples is not None and batch_size is not None: 
         batches = math.ceil(samples/batch_size)
 
-    running_test_loss = 0
+    running_losses = [0]*len(loss_fns)
     with torch.no_grad():
-        for i, (inputs, outputs) in tqdm(enumerate(test_loader, 1), total=batches, desc=str(loss_fn), unit='batch'):
+        for i, (inputs, outputs) in tqdm(enumerate(test_loader, 1), total=batches, desc='computing loss', unit='batch'):
             predictions = model(inputs)
             
-            test_loss = loss_fn(outputs, predictions).item()
-            running_test_loss += test_loss
-            
-    avg_test_loss = running_test_loss / i
+            for loss_nr, loss_fn in enumerate(loss_fns):
+                loss = loss_fn(outputs, predictions).item()
+                running_losses[loss_nr] += loss
+    
+    avg_losses = [running_loss / i for running_loss in running_losses]
 
-    return avg_test_loss
+    return avg_losses if multiple_losses else avg_losses[0]
 
 
 def compute_latent_sensitivity(model: torch.nn.Module, dataset: DataReader, samples: int = None, 
