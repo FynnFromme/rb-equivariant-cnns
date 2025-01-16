@@ -129,7 +129,7 @@ def auto_encoder_animation(model: torch.nn.Module,
     
     
 def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, num: int, channel: int, 
-                         slice: int, axis: int, cols: int = 5, seed: int = 0):
+                         slice: int, axis: int, cols: int = 5, seed: int = 0, contour: bool = True):
     sensitivity_data = sensitivity_data.reshape(-1, *sensitivity_data.shape[-4:]) # flatten latent indices
     random.seed(seed)
     latent_indices = random.sample(range(sensitivity_data.shape[0]), num)
@@ -151,10 +151,11 @@ def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, nu
                     cbar_mode='single')
 
     for ax, im_data in zip(grid, imgs_data):
+        ax_show = ax.contourf if contour else ax.imshow
         if abs_sensitivity:
-            im = ax.imshow(im_data, vmin=min_value, vmax=max_value, cmap='viridis', extent=img_extent)
+            im = ax_show(im_data, vmin=min_value, vmax=max_value, cmap='viridis', extent=img_extent)
         else:
-            im = ax.imshow(im_data, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
+            im = ax_show(im_data, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
         ax.axis('off')
         
     cbar = grid.cbar_axes[0].colorbar(im)
