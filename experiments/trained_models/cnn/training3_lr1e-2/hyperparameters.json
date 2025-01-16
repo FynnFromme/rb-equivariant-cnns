@@ -1,0 +1,30 @@
+{
+    "model_type": "CNN",
+    "batch_size": 64,
+    "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
+    "n_train": 24060,
+    "n_valid": 8020,
+    "h_kernel_size": 3,
+    "v_kernel_size": 5,
+    "drop_rate": 0.2,
+    "nonlinearity": "ELU",
+    "learning_rate": 0.01,
+    "lr_decay": 0.1,
+    "lr_decay_epochs": [
+        10
+    ],
+    "use_lr_scheduler": false,
+    "weight_decay": 0,
+    "early_stopping": 20,
+    "optimizer": "<class 'torch.optim.adam.Adam'>",
+    "flips": true,
+    "rots": 4,
+    "encoder_channels": [
+        16,
+        32,
+        66,
+        160
+    ],
+    "latent_channels": 32,
+    "epochs": 500
+}
