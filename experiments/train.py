@@ -41,6 +41,7 @@ parser.add_argument('-v_kernel_size', type=int, default=5)
 parser.add_argument('-h_kernel_size', type=int, default=3)
 parser.add_argument('-drop_rate', type=float, default=0.2)
 parser.add_argument('-nonlinearity', type=str, default='ELU', choices=['ELU', 'ReLU', 'LeakyReLU'])
+parser.add_argument('-encoder_channels', nargs='+', type=int, default=None)
 parser.add_argument('-latent_channels', type=int, default=32)
 parser.add_argument('-weight_decay', type=float, default=0)
 
@@ -144,6 +145,9 @@ match args.model:
     case '3DCNN':
         print('Selected 3DCNN')
         encoder_channels = (40, 80, 168, 320)
+        
+if args.encoder_channels is not None:
+    encoder_channels = args.encoder_channels
 
 model_hyperparameters = {
     'model_type': args.model,
@@ -192,7 +196,7 @@ initial_early_stop_count, loaded_epoch = training.load_trained_model(model=model
                                                                      epoch=START_EPOCH)
 
 lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=LR_DECAY_PATIENCE, 
-                                                          factor=LR_DECAY, last_epoch=loaded_epoch-1)
+                                                          factor=LR_DECAY)
 
 EPOCHS = args.epochs - loaded_epoch if args.including_loaded_epochs else args.epochs
 
