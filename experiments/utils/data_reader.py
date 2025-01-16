@@ -38,6 +38,8 @@ class DataReader(IterableDataset):
         self.total_num_samples = slice_end-slice_start
         
         self.num_samples = min(self.total_num_samples, samples) if samples != -1 else self.total_num_samples
+        
+        self.num_simulations = self.num_samples // self.num_samples_per_sim
 
 
     def generator(self, start: int = 0, end: int = -1, batch_size: int = 1):

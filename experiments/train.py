@@ -20,6 +20,7 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser()
 
+# script parameters
 parser.add_argument('model', type=str, choices=['3DCNN', 'CNN', 'steerable3DCNN', 'steerableCNN'])
 parser.add_argument('epochs', type=int)
 parser.add_argument('train_name', type=str)
@@ -27,12 +28,29 @@ parser.add_argument('-start_epoch', type=int, default=-1)
 parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
 parser.add_argument('-only_save_best', type=bool, default=True)
 parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
+
+# data parameters
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_train', type=int, default=-1)
 parser.add_argument('-n_valid', type=int, default=-1)
+
+# model hyperparameters
 parser.add_argument('-flips', type=bool, default=True)
 parser.add_argument('-rots', type=int, default=4)
-parser.add_argument('-lr', type=float, default=1e-3)
+parser.add_argument('-v_kernel_size', type=int, default=5)
+parser.add_argument('-h_kernel_size', type=int, default=3)
+parser.add_argument('-drop_rate', type=float, default=0.2)
+parser.add_argument('-nonlinearity', type=str, default='ELU', choices=['ELU', 'ReLU', 'LeakyReLU'])
+parser.add_argument('-latent_channels', type=int, default=32)
+parser.add_argument('-weight_decay', type=float, default=0)
+
+# training hyperparameters
+parser.add_argument('-lr', type=float, default=1e-2)
+parser.add_argument('-no_lr_scheduler', dest='use_lr_scheduler', action='store_false', default=True)
+parser.add_argument('-lr_decay', type=float, default=0.1)
+parser.add_argument('-lr_decay_patience', type=int, default=10)
+parser.add_argument('-early_stopping', type=int, default=20)
+parser.add_argument('-early_stopping_threshold', type=float, default=1e-5)
 
 args = parser.parse_args()
 
@@ -89,16 +107,17 @@ print(f'Using {N_VALID}/{N_valid_avail} validation samples')
 # Hyperparameter
 ########################
 
-H_KERNEL_SIZE, V_KERNEL_SIZE = 3, 5
-DROP_RATE = 0.2
-NONLINEARITY = 'ELU'
+H_KERNEL_SIZE, V_KERNEL_SIZE = args.h_kernel_size, args.v_kernel_size
+DROP_RATE = args.drop_rate
+NONLINEARITY = args.nonlinearity
 
 LEARNING_RATE = args.lr
-LR_DECAY = 0.1
-LR_DECAY_EPOCHS = [10] # epochs at which the learning rate is multiplied by LR_DECAY
-USE_LR_SCHEDULER = False
-WEIGHT_DECAY = 0
-EARLY_STOPPING = 20 # early stopping patience
+LR_DECAY = args.lr_decay
+LR_DECAY_PATIENCE = args.lr_decay_patience # epochs at which the learning rate is multiplied by LR_DECAY
+USE_LR_SCHEDULER = args.use_lr_scheduler
+WEIGHT_DECAY = args.weight_decay
+EARLY_STOPPING = args.early_stopping # early stopping patience
+EARLY_STOPPING_THRESHOLD = args.early_stopping_threshold # early stopping patience
 
 OPTIMIZER = torch.optim.Adam
 
@@ -111,7 +130,7 @@ from experiments.utils.model_building import build_model
 
 
 FLIPS, ROTS = args.flips, args.rots
-LATENT_CHANNELS = 32
+LATENT_CHANNELS = args.latent_channels
 match args.model:
     case 'steerableCNN':
         print(f'Selected Steerable CNN with {ROTS=}, {FLIPS=}')
@@ -172,8 +191,8 @@ initial_early_stop_count, loaded_epoch = training.load_trained_model(model=model
                                                                      train_name=train_name,
                                                                      epoch=START_EPOCH)
 
-lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=LR_DECAY_EPOCHS, 
-                                                    gamma=LR_DECAY, last_epoch=loaded_epoch-1)
+lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=LR_DECAY_PATIENCE, 
+                                                          factor=LR_DECAY, last_epoch=loaded_epoch-1)
 
 EPOCHS = args.epochs - loaded_epoch if args.including_loaded_epochs else args.epochs
 
@@ -187,12 +206,13 @@ train_hyperparameters = {
     'n_train': N_TRAIN,
     'n_valid': N_VALID,
     'learning_rate': LEARNING_RATE,
+    'optimizer': str(OPTIMIZER),
     'lr_decay': LR_DECAY,
-    'lr_decay_epochs': LR_DECAY_EPOCHS,
+    'lr_decay_patience': LR_DECAY_PATIENCE,
     'use_lr_scheduler': USE_LR_SCHEDULER,
     'weight_decay': WEIGHT_DECAY,
     'early_stopping': EARLY_STOPPING,
-    'optimizer': str(OPTIMIZER),
+    'early_stopping_threshold': EARLY_STOPPING_THRESHOLD,
     'epochs': loaded_epoch+EPOCHS
 }
 
@@ -209,4 +229,5 @@ training.train(model=model, models_dir=models_dir, model_name=model_name, train_
                epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, 
                optimizer=optimizer, lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, train_samples=N_TRAIN, 
                batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
-               initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval)
+               initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval,
+               early_stopping_threshold=EARLY_STOPPING_THRESHOLD)

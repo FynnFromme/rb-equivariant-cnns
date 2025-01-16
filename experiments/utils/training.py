@@ -40,6 +40,7 @@ def train(model: torch.nn.Module,
           batch_size: int,
           data_augmentation: DataAugmentation, 
           plot: bool,
+          early_stopping_threshold: float = 1e-5,
           initial_early_stop_count: int = 0,
           train_loss_in_eval: bool = False):
     
@@ -83,9 +84,9 @@ def train(model: torch.nn.Module,
             epoch_duration_values.append(epoch_duration)
             
             if use_lr_scheduler:
-                lr_scheduler.step()
+                lr_scheduler.step(valid_loss)
                 
-            if valid_loss < best_loss:
+            if valid_loss < best_loss - early_stopping_threshold:
                 early_stop_count = 0
                 
                 best_loss = valid_loss
