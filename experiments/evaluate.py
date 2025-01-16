@@ -16,6 +16,8 @@ from torch.utils.data import DataLoader
 
 from argparse import ArgumentParser
 
+from tqdm.auto import tqdm
+
 
 ########################
 # Parsing arguments
@@ -34,6 +36,7 @@ parser.add_argument('-animation_samples', type=int, default=np.inf)
 parser.add_argument('-latent_sensitivity_samples', type=int, default=-1)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_test', type=int, default=-1)
+parser.add_argument('-n_train', type=int, default=-1)
 parser.add_argument('-batch_size', type=int, default=64)
 
 args = parser.parse_args()
@@ -82,8 +85,8 @@ N_TEST = min(args.n_test, N_test_avail) if args.n_test > 0 else N_test_avail
 N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
 test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
 train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN)
-test_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
-train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
+test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
+train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
 print(f'Using {N_TEST}/{N_test_avail} testing samples')
 
@@ -118,7 +121,6 @@ def save_json(dict, json_file):
 
 results_dir = os.path.join(EXPERIMENT_DIR, 'results', args.model_name, args.train_name)
 os.makedirs(results_dir, exist_ok=True)
-
 
 
 if args.eval_performance:
@@ -161,9 +163,8 @@ if args.eval_performance_per_sim:
     sim_performances = sim_performances | {'mse': [], 'rmse': [], 'mae': []}
     
     # update new performance metrics but keep other contents
-    for i, sim_dataset in enumerate(test_dataset.iterate_simulations(), 1):
-        print(f'Evaluating model performance for simulation {i}...')
-        sim_loader = DataLoader(sim_dataset, batch_size=args.batch_size, num_workers=0, drop_last=False)
+    for i, sim_dataset in tqdm(enumerate(test_dataset.iterate_simulations(), 1), total=test_dataset.num_simulations):
+        sim_loader = DataLoader(sim_dataset, batch_size=args.batch_size, drop_last=False)
         
         mse, mae = compute_loss(model, sim_loader,
                                 [torch.nn.MSELoss(), torch.nn.L1Loss()], 
@@ -193,18 +194,19 @@ if args.check_equivariance:
         
         
 if args.animate:
-    anim_dir = os.path.join(EXPERIMENT_DIR, 'animations', args.model_name, args.train_name)
+    anim_dir = os.path.join(results_dir, 'animations')
     horizontal_size = int(args.simulation_name.split('_')[0][1:])
     height = int(args.simulation_name.split('_')[2][1:])
     
     print('Animating...')
-    for feature in ['t', 'u', 'v', 'w']:
-        for axis, dim in enumerate(['width', 'depth', 'height']):
-            slice = height//2 if axis == 2 else horizontal_size//2
-            auto_encoder_animation(slice=slice, fps=25, frames=args.animation_samples, feature=feature, 
-                                axis=axis, anim_dir=os.path.join(anim_dir, feature), anim_name=f'{dim}.mp4', 
-                                model=model, sim_file=sim_file, device=DEVICE)
-            print(f'-> animated {feature} in the {dim} dimension')
+    with tqdm(total=12, desc='animating', unit='animation') as pbar:
+        for feature in ['t', 'u', 'v', 'w']:
+            for axis, dim in enumerate(['width', 'depth', 'height']):
+                slice = height//2 if axis == 2 else horizontal_size//2
+                auto_encoder_animation(slice=slice, fps=25, frames=args.animation_samples, feature=feature, 
+                                    axis=axis, anim_dir=os.path.join(anim_dir, feature), anim_name=f'{dim}.mp4', 
+                                    model=model, sim_file=sim_file, device=DEVICE)
+                pbar.update(1)
 
 
 if args.compute_latent_sensitivity:

@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from utils.data_reader import DataReader
 from tqdm.auto import tqdm
-from collections import Iterable
+from collections.abc import Iterable
 
 import os
 
