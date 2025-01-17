@@ -3,18 +3,22 @@ from .data_reader import DataReader, num_samples
 import math
 import random
 import numpy as np
+import pandas as pd
 import torch
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable, ImageGrid
+import matplotlib.dates as mdates
+from datetime import timedelta, datetime
 
 from typing import Generator, Literal
 
 import os
+import json
 
 
-def predict_batches(model: torch.nn.Module, data_generator: Generator, data_reader: DataReader):
+def _predict_batches(model: torch.nn.Module, data_generator: Generator, data_reader: DataReader):
     """Calculates the models output of a batch of raw simulation data."""
 
     for (inputs, _) in data_generator:
@@ -49,7 +53,7 @@ def auto_encoder_animation(model: torch.nn.Module,
     data_reader = DataReader(sim_file, dataset, device, shuffle=False)
     data_generator = data_reader(batch_size=batch_size)
     
-    predicted_batches_gen = predict_batches(model, data_generator, data_reader)
+    predicted_batches_gen = _predict_batches(model, data_generator, data_reader)
     batch_x, batch_y, batch_x_stand, batch_y_stand = next(predicted_batches_gen)
     in_batch_frame = 0
 
@@ -161,3 +165,106 @@ def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, nu
     cbar = grid.cbar_axes[0].colorbar(im)
     
     plt.show()
+    
+    
+def plot_loss_history(model_dir: str, model_names: str | list, train_names: str | list, two_plots: bool = True, 
+                      log_scale: bool = False, time_x: bool = False, remove_outliers: bool = True, smoothing: float = 0):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(20, 5) if two_plots else (8, 5))
+    
+    train_losses = []
+    valid_losses = []
+    for model_name, train_name in zip(model_names, train_names):
+        log_file = os.path.join(model_dir, model_name, train_name, 'log.json')
+        with open(log_file, 'r') as f:
+            log = json.load(f)
+
+        x = range(1, len(log['train_loss'])+1)
+        if time_x:
+            x = [sum(log['epoch_duration'][:i]) for i in x]
+            
+        if two_plots: 
+            ax = plt.subplot(1, 2, 1)
+        train_loss = log['train_loss']
+        if smoothing > 0:
+            smoothed_train_loss = exponential_moving_average(train_loss, smoothing)
+            smoothed_line, = plt.plot(x, smoothed_train_loss, label=f'{model_name}/{train_name} - train')
+            plt.plot(x, train_loss, alpha=0.15, color=smoothed_line.get_color())
+        else:
+            plt.plot(x, train_loss, label=f'{model_name}/{train_name} - train')            
+        train_losses.append(train_loss)
+        
+        if two_plots:
+            ax = plt.subplot(1, 2, 2)
+        valid_loss = log['valid_loss']
+        if smoothing > 0:
+            smoothed_valid_loss = exponential_moving_average(valid_loss, smoothing)
+            smoothed_line, = plt.plot(x, smoothed_valid_loss, label=f'{model_name}/{train_name} - valid')
+            plt.plot(x, valid_loss, alpha=0.15, color=smoothed_line.get_color())
+        else:
+            plt.plot(x, valid_loss, label=f'{model_name}/{train_name} - valid') 
+        valid_losses.append(log['valid_loss'])
+        
+    if two_plots:
+        ax = plt.subplot(1, 2, 1)
+        plt.title('Training Losses')
+        plt.legend() 
+        if log_scale: ax.set_yscale('log')
+        if time_x: ax.xaxis.set_major_formatter(plt.FuncFormatter(_custom_duration_formatter))
+        plt.grid(True)
+        plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
+        plt.ylabel('loss (log-scale)' if log_scale else 'loss')
+        if remove_outliers: plt.ylim(top=_max_upper_bound(train_losses))
+        
+        ax = plt.subplot(1, 2, 2)
+        plt.title('Validation Losses')
+        plt.legend() 
+        if log_scale: ax.set_yscale('log')
+        if time_x: ax.xaxis.set_major_formatter(plt.FuncFormatter(_custom_duration_formatter))
+        plt.grid(True)
+        plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
+        plt.ylabel('loss (log-scale)' if log_scale else 'loss')
+        if remove_outliers: plt.ylim(top=_max_upper_bound(valid_losses))
+    else:
+        plt.title('Losses During Training')
+        plt.legend() 
+        if log_scale: plt.yscale('log')
+        if time_x: plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(_custom_duration_formatter))
+        plt.grid(True)
+        plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
+        plt.ylabel('loss (log-scale)' if log_scale else 'loss')
+        if remove_outliers: plt.ylim(top=max(_max_upper_bound(train_losses),
+                                             _max_upper_bound(valid_losses)))
+    
+    if time_x: fig.autofmt_xdate() # auto format
+    
+    
+def _custom_duration_formatter(secs, *args):
+    td = timedelta(seconds=secs)
+    days = td.days
+    hours, remainder = divmod(td.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{days:02d}:{hours:02d}:{minutes:02d}"
+
+
+def _lower_upper_bounds(x):
+    q1 = np.percentile(x, 25)
+    q3 = np.percentile(x, 75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    
+    return lower_bound, upper_bound
+
+
+def _max_upper_bound(x):
+    return max(_lower_upper_bounds(l)[1] for l in x)
+
+
+def exponential_moving_average(data, alpha=0.7):
+    ema = [data[0]]  # Start with the first data point
+    for value in data[1:]:
+        ema.append((1-alpha) * value + alpha * ema[-1])
+    return ema
