@@ -163,7 +163,8 @@ if args.eval_performance_per_sim:
     sim_performances = sim_performances | {'mse': [], 'rmse': [], 'mae': []}
     
     # update new performance metrics but keep other contents
-    for i, sim_dataset in tqdm(enumerate(test_dataset.iterate_simulations(), 1), total=test_dataset.num_simulations):
+    for i, sim_dataset in tqdm(enumerate(test_dataset.iterate_simulations(), 1), total=test_dataset.num_simulations,
+                               desc='evaluating simulations', unit='sim'):
         sim_loader = DataLoader(sim_dataset, batch_size=args.batch_size, drop_last=False)
         
         mse, mae = compute_loss(model, sim_loader,
@@ -175,6 +176,10 @@ if args.eval_performance_per_sim:
         sim_performances['rmse'].append(rmse)
         sim_performances['mae'].append(mae)
 
+    sim_performances['std_mse'] = np.std(sim_performances['mse'])
+    sim_performances['std_rmse'] = np.std(sim_performances['rmse'])
+    sim_performances['std_mae'] = np.std(sim_performances['mae'])
+    
     print(sim_performances)
     
     # update performances in file

@@ -217,7 +217,8 @@ train_hyperparameters = {
     'weight_decay': WEIGHT_DECAY,
     'early_stopping': EARLY_STOPPING,
     'early_stopping_threshold': EARLY_STOPPING_THRESHOLD,
-    'epochs': loaded_epoch+EPOCHS
+    'epochs': loaded_epoch+EPOCHS,
+    'train_loss_in_eval': args.train_loss_in_eval
 }
 
 hyperparameters = model_hyperparameters | train_hyperparameters

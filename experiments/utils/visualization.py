@@ -3,14 +3,13 @@ from .data_reader import DataReader, num_samples
 import math
 import random
 import numpy as np
-import pandas as pd
 import torch
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.colors as mcolors
 from mpl_toolkits.axes_grid1 import make_axes_locatable, ImageGrid
-import matplotlib.dates as mdates
-from datetime import timedelta, datetime
+from datetime import timedelta
 
 from typing import Generator, Literal
 
@@ -162,7 +161,7 @@ def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, nu
             im = ax_show(im_data, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
         ax.axis('off')
         
-    cbar = grid.cbar_axes[0].colorbar(im)
+    grid.cbar_axes[0].colorbar(im)
     
     plt.show()
     
@@ -178,8 +177,12 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
     valid_losses = []
     for model_name, train_name in zip(model_names, train_names):
         log_file = os.path.join(model_dir, model_name, train_name, 'log.json')
+        hyperparameters_file = os.path.join(model_dir, model_name, train_name, 'hyperparameters.json')
         with open(log_file, 'r') as f:
             log = json.load(f)
+        with open(hyperparameters_file, 'r') as f:
+            hyperparameters = json.load(f)
+        train_loss_incl_dropout = hyperparameters['drop_rate'] > 0 and not hyperparameters['train_loss_in_eval']
 
         x = range(1, len(log['train_loss'])+1)
         if time_x:
@@ -188,25 +191,30 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         if two_plots: 
             ax = plt.subplot(1, 2, 1)
         train_loss = log['train_loss']
+        label = f'{model_name}/{train_name} - train'
+        if train_loss_incl_dropout:
+            label += ' (affected by dropout)'
         if smoothing > 0:
             smoothed_train_loss = exponential_moving_average(train_loss, smoothing)
-            smoothed_line, = plt.plot(x, smoothed_train_loss, label=f'{model_name}/{train_name} - train')
-            plt.plot(x, train_loss, alpha=0.15, color=smoothed_line.get_color())
+            smoothed_line, = plt.plot(x, smoothed_train_loss, label=label)
+            train_line, = plt.plot(x, train_loss, alpha=0.15, color=smoothed_line.get_color())
         else:
-            plt.plot(x, train_loss, label=f'{model_name}/{train_name} - train')            
+            train_line, = plt.plot(x, train_loss, label=label)            
         train_losses.append(train_loss)
         
         if two_plots:
             ax = plt.subplot(1, 2, 2)
         valid_loss = log['valid_loss']
+        color = train_line.get_color() if two_plots else darken_color(train_line.get_color(), 0.8)
         if smoothing > 0:
             smoothed_valid_loss = exponential_moving_average(valid_loss, smoothing)
-            smoothed_line, = plt.plot(x, smoothed_valid_loss, label=f'{model_name}/{train_name} - valid')
+            smoothed_line, = plt.plot(x, smoothed_valid_loss, label=f'{model_name}/{train_name} - valid', color=color)
             plt.plot(x, valid_loss, alpha=0.15, color=smoothed_line.get_color())
         else:
-            plt.plot(x, valid_loss, label=f'{model_name}/{train_name} - valid') 
+            plt.plot(x, valid_loss, label=f'{model_name}/{train_name} - valid', color=color) 
         valid_losses.append(log['valid_loss'])
         
+    
     if two_plots:
         ax = plt.subplot(1, 2, 1)
         plt.title('Training Losses')
@@ -268,3 +276,9 @@ def exponential_moving_average(data, alpha=0.7):
     for value in data[1:]:
         ema.append((1-alpha) * value + alpha * ema[-1])
     return ema
+
+
+def darken_color(color, amount=0.5):
+    rgb = mcolors.to_rgb(color)  # Convert to RGB
+    darker_rgb = tuple(max(0, c * amount) for c in rgb)  # Scale down
+    return darker_rgb

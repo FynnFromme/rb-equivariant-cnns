@@ -1,17 +1,17 @@
 {
     "model_type": "steerableCNN",
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
-    "h_kernel_size": 3,
-    "v_kernel_size": 3,
+    "h_kernel_size": 5,
+    "v_kernel_size": 5,
     "drop_rate": 0.2,
     "nonlinearity": "ELU",
     "flips": true,
     "rots": 4,
     "encoder_channels": [
-        10,
-        20,
-        42,
-        84
+        6,
+        12,
+        24,
+        45
     ],
     "latent_channels": 32,
     "batch_size": 64,

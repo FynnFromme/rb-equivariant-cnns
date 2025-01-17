@@ -26,5 +26,6 @@
         320
     ],
     "latent_channels": 32,
-    "epochs": 500
+    "epochs": 500,
+    "train_loss_in_eval": false
 }
