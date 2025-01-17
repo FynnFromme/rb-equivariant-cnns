@@ -195,7 +195,7 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         if train_loss_incl_dropout:
             label += ' (affected by dropout)'
         if smoothing > 0:
-            smoothed_train_loss = exponential_moving_average(train_loss, smoothing)
+            smoothed_train_loss = _exponential_moving_average(train_loss, smoothing)
             smoothed_line, = plt.plot(x, smoothed_train_loss, label=label)
             train_line, = plt.plot(x, train_loss, alpha=0.15, color=smoothed_line.get_color())
         else:
@@ -205,9 +205,9 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         if two_plots:
             ax = plt.subplot(1, 2, 2)
         valid_loss = log['valid_loss']
-        color = train_line.get_color() if two_plots else darken_color(train_line.get_color(), 0.8)
+        color = train_line.get_color() if two_plots else _darken_color(train_line.get_color(), 0.8)
         if smoothing > 0:
-            smoothed_valid_loss = exponential_moving_average(valid_loss, smoothing)
+            smoothed_valid_loss = _exponential_moving_average(valid_loss, smoothing)
             smoothed_line, = plt.plot(x, smoothed_valid_loss, label=f'{model_name}/{train_name} - valid', color=color)
             plt.plot(x, valid_loss, alpha=0.15, color=smoothed_line.get_color())
         else:
@@ -271,14 +271,58 @@ def _max_upper_bound(x):
     return max(_lower_upper_bounds(l)[1] for l in x)
 
 
-def exponential_moving_average(data, alpha=0.7):
+def _exponential_moving_average(data, alpha=0.7):
     ema = [data[0]]  # Start with the first data point
     for value in data[1:]:
         ema.append((1-alpha) * value + alpha * ema[-1])
     return ema
 
 
-def darken_color(color, amount=0.5):
+def _darken_color(color, amount=0.5):
     rgb = mcolors.to_rgb(color)  # Convert to RGB
     darker_rgb = tuple(max(0, c * amount) for c in rgb)  # Scale down
     return darker_rgb
+
+
+def plot_performance(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(8, 5))
+    
+    performances = []
+    performances_train = []
+    for model_name, train_name in zip(model_names, train_names):
+        results_file = os.path.join(results_dir, model_name, train_name, 'performance.json')
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+        performances.append(results[metric])
+        performances_train.append(results[f'{metric}_train'])
+        
+    x_labels = [f'{model_name}/{train_name}' for model_name, train_name in zip(model_names, train_names)]
+    plt.plot(x_labels, performances, label=f'test {metric.upper()}', marker='o', linestyle='--')
+    plt.plot(x_labels, performances_train, label=f'train {metric.upper()}', marker='o', linestyle='--')
+    
+    fig.autofmt_xdate()
+    plt.ylabel(metric.upper())
+    plt.xlabel('model')
+    plt.legend()
+    
+    
+def plot_performance_per_sim(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(8, 5))
+    
+    for model_name, train_name in zip(model_names, train_names):
+        results_file = os.path.join(results_dir, model_name, train_name, 'performance_per_sim.json')
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+        x = range(1, len(results[metric])+1)
+        plt.plot(x, results[metric], label=f'{model_name}/{train_name}')
+    
+    plt.xticks(x)
+    plt.ylabel(metric.upper())
+    plt.xlabel('simulation')
+    plt.legend()
