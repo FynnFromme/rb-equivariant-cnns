@@ -307,6 +307,7 @@ def plot_performance(results_dir: str, model_names: str | list, train_names: str
     plt.ylabel(metric.upper())
     plt.xlabel('model')
     plt.legend()
+    plt.grid(axis='y')
     
     
 def plot_performance_per_sim(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
@@ -320,9 +321,10 @@ def plot_performance_per_sim(results_dir: str, model_names: str | list, train_na
         with open(results_file, 'r') as f:
             results = json.load(f)
         x = range(1, len(results[metric])+1)
-        plt.plot(x, results[metric], label=f'{model_name}/{train_name}')
+        plt.plot(x, results[metric], label=f'{model_name}/{train_name}', marker='o')
     
     plt.xticks(x)
     plt.ylabel(metric.upper())
     plt.xlabel('simulation')
     plt.legend()
+    plt.grid(axis='y')
