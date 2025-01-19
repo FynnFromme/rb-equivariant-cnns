@@ -14,6 +14,7 @@ from typing import Callable, Any, Generator
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'datasets')
 SIM_DATA_DIR = os.path.join(DATA_DIR, '..', '..', 'simulation', '3d', 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
 
 class DataPreparation:
     def __init__(self, 

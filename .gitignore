@@ -1,9 +1,8 @@
-simulation/[23]d/data/*
-data/datasets/*
-experiments/runs/*
-experiments/trained_models/*/*/*.tar
-experiments/results/*/*/latent_sensitivity.pt
-experiments/results/*/*/animations/*
+simulation/[23]d/data/*/sim*
+data/datasets/**/*.h5
+experiments/results/**/animations/*
+experiments/results/**/latent_sensitivity.pt
+experiments/trained_models/**/epoch*.tar
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
