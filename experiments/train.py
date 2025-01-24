@@ -33,12 +33,13 @@ parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_train', type=int, default=-1)
 parser.add_argument('-n_valid', type=int, default=-1)
+parser.add_argument('-batch_size', type=int, default=64)
 
 # model hyperparameters
 parser.add_argument('-flips', type=bool, default=True)
 parser.add_argument('-rots', type=int, default=4)
 parser.add_argument('-v_kernel_size', type=int, default=5)
-parser.add_argument('-h_kernel_size', type=int, default=3)
+parser.add_argument('-h_kernel_size', type=int, default=5)
 parser.add_argument('-drop_rate', type=float, default=0.2)
 parser.add_argument('-nonlinearity', type=str, default='ELU', choices=['ELU', 'ReLU', 'LeakyReLU'])
 parser.add_argument('-encoder_channels', nargs='+', type=int, default=None)
@@ -46,10 +47,10 @@ parser.add_argument('-latent_channels', type=int, default=32)
 parser.add_argument('-weight_decay', type=float, default=0)
 
 # training hyperparameters
-parser.add_argument('-lr', type=float, default=1e-2)
+parser.add_argument('-lr', type=float, default=1e-3)
 parser.add_argument('-no_lr_scheduler', dest='use_lr_scheduler', action='store_false', default=True)
-parser.add_argument('-lr_decay', type=float, default=0.1)
-parser.add_argument('-lr_decay_patience', type=int, default=10)
+parser.add_argument('-lr_decay', type=float, default=0.5)
+parser.add_argument('-lr_decay_patience', type=int, default=5)
 parser.add_argument('-early_stopping', type=int, default=20)
 parser.add_argument('-early_stopping_threshold', type=float, default=1e-5)
 
@@ -78,7 +79,7 @@ else:
 ########################
 # Data
 ########################
-BATCH_SIZE = 64
+BATCH_SIZE = args.batch_size
 
 SIMULATION_NAME = args.simulation_name
 
@@ -135,16 +136,20 @@ LATENT_CHANNELS = args.latent_channels
 match args.model:
     case 'steerableCNN':
         print(f'Selected Steerable CNN with {ROTS=}, {FLIPS=}')
-        encoder_channels = {(True, 4): (8, 16, 32, 64)}[(FLIPS, ROTS)]
+        encoder_channels = {
+            (True, 4): (6, 12, 23, 47)
+            }[(FLIPS, ROTS)]
     case 'steerable3DCNN':
         print(f'Selected Steerable 3D CNN with {ROTS=}, {FLIPS=}')
-        encoder_channels = {(True, 4): (24, 48, 96, 192)}[(FLIPS, ROTS)]
+        encoder_channels = {
+            (True, 4): (24, 48, 93, 186)
+            }[(FLIPS, ROTS)]
     case 'CNN':
         print('Selected CNN')
-        encoder_channels = (16, 32, 66, 160)
+        encoder_channels = (10, 20, 40, 80)
     case '3DCNN':
         print('Selected 3DCNN')
-        encoder_channels = (40, 80, 168, 320)
+        encoder_channels = (24, 47, 93, 186)
         
 if args.encoder_channels is not None:
     encoder_channels = args.encoder_channels

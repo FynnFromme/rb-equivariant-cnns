@@ -219,9 +219,11 @@ def load_trained_model(model, models_dir, model_name, train_name, optimizer=None
         # load latest epoch
         pattern = re.compile(r"epoch([0-9]+)\.tar")
         saved_epochs = [filename for filename in os.listdir(directory) if pattern.fullmatch(filename)]
-        filename = max(saved_epochs, key=lambda f: int(pattern.fullmatch(f).group(1)))
-        epoch = int(pattern.fullmatch(filename).group(1))
-        file_path = os.path.join(directory, filename)
+        last_epoch_file = max(saved_epochs, key=lambda f: int(pattern.fullmatch(f).group(1)), default=None)
+        if last_epoch_file is None:
+            return 0, 0
+        epoch = int(pattern.fullmatch(last_epoch_file).group(1))
+        file_path = os.path.join(directory, last_epoch_file)
     else:
         # load specified epoch
         file_path = os.path.join(directory, f'epoch{epoch}.tar')

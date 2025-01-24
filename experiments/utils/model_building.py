@@ -69,7 +69,8 @@ def build_RB3DSteerableAutoencoder(simulation_name: str, rots: int, flips: int, 
                                     encoder_channels=encoder_channels,
                                     latent_channels=latent_channels//G_size,
                                     kernel_size=v_kernel_size,
-                                    drop_rate=drop_rate, nonlinearity=nonlinearity)
+                                    drop_rate=drop_rate, 
+                                    nonlinearity=nonlinearity)
     
 
 def build_RBAutoencoder(simulation_name: str, encoder_channels: tuple, latent_channels: int, v_kernel_size: int, 
