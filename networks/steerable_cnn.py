@@ -281,7 +281,7 @@ class RBPooling(enn.EquivariantModule):
         self.in_type = FieldType(gspace, self.in_height * self.in_fields)
         self.out_type = FieldType(gspace, self.out_height * self.in_fields)
         
-        self.pool_op = F.max_pool3d if type.lower() == 'max' else F.mean_pool3d
+        self.pool_op = F.max_pool3d if type.lower() == 'max' else F.avg_pool3d
         
         
     def forward(self, input: GeometricTensor) -> GeometricTensor:

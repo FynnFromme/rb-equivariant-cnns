@@ -11,7 +11,7 @@ from escnn.nn import GeometricTensor
 from escnn.group import Representation
 from escnn.gspaces import GSpace
 
-from networks.steerable_cnn3d import RBSteerable3DConv, RBPooling, RBUpsampling
+from networks.steerable_cnn3d import RBSteerable3DConv, RBPooling, RBUpsampling, InnerBatchNorm3D
 
 
 class _Steerable3DConvBlock(enn.SequentialModule):
@@ -60,7 +60,7 @@ class _Steerable3DConvBlock(enn.SequentialModule):
         layers = []
         if input_drop_rate > 0: layers.append(enn.PointwiseDropout(conv.in_type, p=input_drop_rate))
         layers.append(conv)
-        if batch_norm: layers.append(enn.IIDBatchNorm3d(conv.out_type))
+        if batch_norm: layers.append(InnerBatchNorm3D(conv.out_type)) # TODO does that work?
         if nonlinearity: layers.append(nonlinearity(conv.out_type))
         
         super().__init__(*layers)
@@ -114,7 +114,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         in_fields, in_dims = rb_fields, rb_dims
         for i, out_channnels in enumerate(encoder_channels, 1):
             out_fields = out_channnels*hidden_field_type
-            layer_drop_rate = 0 if i == 1 else drop_rate # don't apply dropout to the networks input
+            layer_drop_rate = 0 if i == 1 else drop_rate # don't apply dropout to the network's input
             
             encoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
                                                         in_fields=in_fields, 
@@ -367,7 +367,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         training = self.training
         self.eval()
         
-        x = torch.randn(3, self.in_dims[-1], *self.in_dims[:2], 4)
+        x = torch.randn(3, self.in_dims[2], *self.in_dims[:2], 4)
         x = self._from_input_shape(x)
         if gpu_device is not None: 
             x = x.to(gpu_device)

@@ -176,7 +176,7 @@ class RBPooling(nn.Module):
         self.v_kernel_size = v_kernel_size
         self.h_kernel_size = h_kernel_size
         
-        self.pool_op = F.max_pool3d if type.lower() == 'max' else F.mean_pool3d
+        self.pool_op = F.max_pool3d if type.lower() == 'max' else F.avg_pool3d
         
         
     def forward(self, input: Tensor) -> Tensor:
