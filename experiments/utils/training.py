@@ -57,6 +57,7 @@ def train(model: torch.nn.Module,
         train_loss_values = []
         valid_loss_values = []
         epoch_duration_values = []
+        lr_values = []
     else:
         best_loss = compute_loss(valid_loader, model, loss_fn)
         best_epoch = start_epoch
@@ -65,6 +66,7 @@ def train(model: torch.nn.Module,
             train_loss_values = log_dict['train_loss'][:start_epoch]
             valid_loss_values = log_dict['valid_loss'][:start_epoch]
             epoch_duration_values = log_dict['epoch_duration'][:start_epoch]
+            lr_values = log_dict['lr'][:start_epoch]
         
     early_stop_count = initial_early_stop_count
     
@@ -85,6 +87,7 @@ def train(model: torch.nn.Module,
             
             if use_lr_scheduler:
                 lr_scheduler.step(valid_loss)
+            lr_values.append(lr_scheduler.get_last_lr()[0])
                 
             if valid_loss < best_loss - early_stopping_threshold:
                 early_stop_count = 0
@@ -104,7 +107,7 @@ def train(model: torch.nn.Module,
                 early_stop_count += 1
                 
             save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values,
-                     best_epoch, best_loss)
+                     best_epoch, best_loss, lr_values)
             
             if early_stop_count >= early_stopping:
                 print(f'Early stopping at epoch {epoch}.')
@@ -193,13 +196,14 @@ def save_checkpoint(path, weights, optimizer_state, early_stop_count):
     
     
 def save_log(log_file, train_loss_values, valid_loss_values, epoch_duration_values, 
-             best_epoch, best_loss):
+             best_epoch, best_loss, lr_values):
     with open(log_file, 'w+') as f:
         log_dict = {'train_loss': train_loss_values, 
                     'valid_loss': valid_loss_values,
                     'epoch_duration': epoch_duration_values,
                     'best_epoch': best_epoch,
-                    'best_valid_loss': best_loss}
+                    'best_valid_loss': best_loss,
+                    'lr': lr_values}
         json.dump(log_dict, f, indent=4)
     
 
