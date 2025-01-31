@@ -299,9 +299,9 @@ class DataPreparation:
         samples_shape = (*dims, self.out_channels)
         chunk_shape = (1, *dims, 1)
         
-        train_data = datafile.create_dataset("train", (N_train, *samples_shape), chunks=chunk_shape)
-        valid_data = datafile.create_dataset("valid", (N_valid, *samples_shape), chunks=chunk_shape)
-        test_data = datafile.create_dataset("test", (N_test, *samples_shape), chunks=chunk_shape)
+        train_data = datafile.create_dataset('train', (N_train, *samples_shape), chunks=chunk_shape)
+        valid_data = datafile.create_dataset('valid', (N_valid, *samples_shape), chunks=chunk_shape)
+        test_data = datafile.create_dataset('test', (N_test, *samples_shape), chunks=chunk_shape)
         
         train_data.attrs['N'] = N_train
         valid_data.attrs['N'] = N_valid
@@ -311,6 +311,20 @@ class DataPreparation:
         test_data.attrs['N_per_sim'] = snapshots_per_file
         
         return datafile
+
+
+    def _save_attrs(self, datafile, train_files, valid_files, test_files, snapshots_per_file):
+        datafile['train'].attrs['N'] = snapshots_per_file*len(train_files)
+        datafile['valid'].attrs['N'] = snapshots_per_file*len(valid_files)
+        datafile['test'].attrs['N'] = snapshots_per_file*len(test_files)
+        
+        datafile['train'].attrs['files'] = train_files
+        datafile['valid'].attrs['files'] = valid_files
+        datafile['test'].attrs['files'] = test_files
+        
+        datafile['train'].attrs['N_per_sim'] = snapshots_per_file
+        datafile['valid'].attrs['N_per_sim'] = snapshots_per_file
+        datafile['test'].attrs['N_per_sim'] = snapshots_per_file
 
 
     def _write_data(self, datafile: h5py.File, scaler: StandardScaler, train_files: list[str], 
