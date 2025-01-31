@@ -75,9 +75,12 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
                  rb_dims: tuple,
                  encoder_channels: tuple,
                  latent_channels: int,
-                 kernel_size: int = 3,
-                 drop_rate: float = 0.2,
-                 nonlinearity: Callable = enn.ELU):
+                 kernel_size: int,
+                 latent_kernel_size: int,
+                 drop_rate: float,
+                 pool_layers: tuple[bool] = None,
+                 nonlinearity: Callable = enn.ELU,
+                 **kwargs):
         """A Rayleigh-Bénard autoencoder based on 3D steerable convolutions with vertical parameter sharing.
 
         Args:
@@ -88,14 +91,18 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
             encoder_channels (tuple): The channels of the encoder. Each entry results in a corresponding layer.
                 The decoder uses the channels in reversed order.
             latent_channels (int): The number of channels in the latent space.
-            kernel_size (int, optional): The horizontal kernel size (in all dimensions). Defaults to 3.
-            drop_rate (float, optional): The drop rate used for dropout. Set to 0 to turn off dropout. 
-                Defaults to 0.2.
+            kernel_size (int): The kernel size (in all dimensions).
+            latent_kernel_size (int): The kernel size (in all dimensions) applied on the latent space.
+            drop_rate (float): The drop rate used for dropout. Set to 0 to turn off dropout. 
+            pool_layers (tuple[bool], optional): A boolean tuple specifying the encoder layer to pool afterwards.
+                The same is used in reversed order for upsampling in the decoder. Defaults to pooling/upsampling
+                after each layer.
             nonlinearity (Callable, optional): The nonlinearity applied to the conv output. Set to `None` to
                 have no nonlinearity. Defaults to enn.ELU.
         """
         
         super().__init__()
+        if pool_layers is None: pool_layers = [True]*len(encoder_channels)
         
         irrep_frequencies = (1, 1) if gspace._sg_id[1] == True else (1,) # depending whether using Cn or Dn group
 
@@ -112,8 +119,8 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         ####   Encoder   ####
         #####################
         in_fields, in_dims = rb_fields, rb_dims
-        for i, out_channnels in enumerate(encoder_channels, 1):
-            out_fields = out_channnels*hidden_field_type
+        for i, (out_channels, pool) in enumerate(zip(encoder_channels, pool_layers), 1):
+            out_fields = out_channels*hidden_field_type
             layer_drop_rate = 0 if i == 1 else drop_rate # don't apply dropout to the network's input
             
             encoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
@@ -125,17 +132,19 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
                                                         nonlinearity=nonlinearity, 
                                                         batch_norm=True))
             in_fields = encoder_layers[-1].out_fields
-            self.out_shapes[f'EncoderConv{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.out_shapes[f'EncoderConv{i}'] = [out_channels, sum(f.size for f in hidden_field_type), *in_dims]
             self.layer_params[f'EncoderConv{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
-            encoder_layers.append(RBPooling(gspace=gspace, 
-                                            in_fields=in_fields, 
-                                            in_dims=in_dims,
-                                            v_kernel_size=2, 
-                                            h_kernel_size=2))
+            if pool:
+                encoder_layers.append(RBPooling(gspace=gspace, 
+                                                in_fields=in_fields, 
+                                                in_dims=in_dims,
+                                                v_kernel_size=2, 
+                                                h_kernel_size=2))
+                self.out_shapes[f'Pooling{i}'] = [out_channels, sum(f.size for f in hidden_field_type), 
+                                                  *encoder_layers[-1].out_dims]
+                self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             in_dims = encoder_layers[-1].out_dims
-            self.out_shapes[f'Pooling{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
         ######################
         #### Latent Space ####
@@ -145,7 +154,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
                                                     in_fields=in_fields, 
                                                     out_fields=out_fields, 
                                                     in_dims=in_dims, 
-                                                    kernel_size=kernel_size, 
+                                                    kernel_size=latent_kernel_size, 
                                                     input_drop_rate=drop_rate, 
                                                     nonlinearity=nonlinearity, 
                                                     batch_norm=True))
@@ -158,8 +167,10 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         #####################
         ####   Decoder   ####
         #####################
-        for i, out_channnels in enumerate(reversed(encoder_channels), 1):
-            out_fields = out_channnels*hidden_field_type
+        decoder_channels = reversed(encoder_channels)
+        upsample_layers = reversed(pool_layers)
+        for i, (out_channels, upsample) in enumerate(zip(decoder_channels, upsample_layers), 1):
+            out_fields = out_channels*hidden_field_type
             
             decoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
                                                         in_fields=in_fields, 
@@ -170,17 +181,19 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
                                                         nonlinearity=nonlinearity, 
                                                         batch_norm=True))
             in_fields = decoder_layers[-1].out_fields
-            self.out_shapes[f'DecoderConv{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
+            self.out_shapes[f'DecoderConv{i}'] = [out_channels, sum(f.size for f in hidden_field_type), *in_dims]
             self.layer_params[f'DecoderConv{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
             
-            decoder_layers.append(RBUpsampling(gspace=gspace, 
-                                               in_fields=in_fields, 
-                                               in_dims=in_dims,
-                                               v_scale=2, 
-                                               h_scale=2))
+            if upsample:
+                decoder_layers.append(RBUpsampling(gspace=gspace, 
+                                                in_fields=in_fields, 
+                                                in_dims=in_dims,
+                                                v_scale=2, 
+                                                h_scale=2))
+                self.out_shapes[f'Upsampling{i}'] = [out_channels, sum(f.size for f in hidden_field_type), 
+                                                     *decoder_layers[-1].out_dims]
+                self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
             in_dims = decoder_layers[-1].out_dims
-            self.out_shapes[f'Upsampling{i}'] = [out_channnels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
         
         ######################
         ####    Output    ####

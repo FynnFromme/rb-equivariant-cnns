@@ -12,11 +12,21 @@ from utils import training
 
 from escnn import gspaces
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentTypeError
 
 ########################
 # Parsing arguments
 ########################
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise ArgumentTypeError('Boolean value expected.')
 
 parser = ArgumentParser()
 
@@ -26,7 +36,7 @@ parser.add_argument('epochs', type=int)
 parser.add_argument('train_name', type=str)
 parser.add_argument('-start_epoch', type=int, default=-1)
 parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
-parser.add_argument('-only_save_best', type=bool, default=True)
+parser.add_argument('-only_save_best', type=str2bool, default=True)
 parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
 
 # data parameters
@@ -40,9 +50,12 @@ parser.add_argument('-flips', type=bool, default=True)
 parser.add_argument('-rots', type=int, default=4)
 parser.add_argument('-v_kernel_size', type=int, default=5)
 parser.add_argument('-h_kernel_size', type=int, default=5)
+parser.add_argument('-latent_v_kernel_size', type=int, default=3)
+parser.add_argument('-latent_h_kernel_size', type=int, default=3)
 parser.add_argument('-drop_rate', type=float, default=0.2)
 parser.add_argument('-nonlinearity', type=str, default='ELU', choices=['ELU', 'ReLU', 'LeakyReLU'])
 parser.add_argument('-encoder_channels', nargs='+', type=int, default=None)
+parser.add_argument('-pool_layers', nargs='+', type=str2bool, default=None)
 parser.add_argument('-latent_channels', type=int, default=32)
 parser.add_argument('-weight_decay', type=float, default=0)
 
@@ -110,6 +123,7 @@ print(f'Using {N_VALID}/{N_valid_avail} validation samples')
 ########################
 
 H_KERNEL_SIZE, V_KERNEL_SIZE = args.h_kernel_size, args.v_kernel_size
+LATENT_H_KERNEL_SIZE, LATENT_V_KERNEL_SIZE = args.latent_h_kernel_size, args.latent_v_kernel_size
 DROP_RATE = args.drop_rate
 NONLINEARITY = args.nonlinearity
 
@@ -122,7 +136,6 @@ EARLY_STOPPING = args.early_stopping # early stopping patience
 EARLY_STOPPING_THRESHOLD = args.early_stopping_threshold # early stopping patience
 
 OPTIMIZER = torch.optim.Adam
-
 
 ########################
 # Building Model
@@ -153,18 +166,23 @@ match args.model:
         
 if args.encoder_channels is not None:
     encoder_channels = args.encoder_channels
+    
+POOL_LAYERS = args.pool_layers
 
 model_hyperparameters = {
     'model_type': args.model,
     'simulation_name': SIMULATION_NAME,
     'h_kernel_size': H_KERNEL_SIZE,
     'v_kernel_size': V_KERNEL_SIZE,
+    'latent_h_kernel_size': LATENT_H_KERNEL_SIZE,
+    'latent_v_kernel_size': LATENT_V_KERNEL_SIZE,
     'drop_rate': DROP_RATE,
     'nonlinearity': NONLINEARITY,
     'flips': FLIPS,
     'rots': ROTS,
     'encoder_channels': encoder_channels,
     'latent_channels': LATENT_CHANNELS,
+    'pool_layers': POOL_LAYERS
 }
 
 model = build_model(**model_hyperparameters)
@@ -228,8 +246,15 @@ train_hyperparameters = {
 
 hyperparameters = model_hyperparameters | train_hyperparameters
 
-with open(os.path.join(train_dir, 'hyperparameters.json'), 'w+') as f:
-    json.dump(hyperparameters, f, indent=4)
+hp_file = os.path.join(train_dir, 'hyperparameters.json')
+if loaded_epoch > 0 and os.path.isfile(hp_file):
+    with open(hp_file, 'r') as f:
+        prev_hps = json.load(f)
+        prev_hps['epochs'] = hyperparameters['epochs'] # ignore epochs
+        assert hyperparameters == prev_hps, f"New hyperparameters do not correspond to the old ones"
+else:
+    with open(hp_file, 'w+') as f:
+        json.dump(hyperparameters, f, indent=4)
 
 ########################
 # Training

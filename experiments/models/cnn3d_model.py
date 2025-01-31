@@ -64,10 +64,14 @@ class RB3DAutoencoder(nn.Sequential):
                  rb_dims: tuple,
                  encoder_channels: tuple,
                  latent_channels: int,
-                 v_kernel_size: int = 3,
-                 h_kernel_size: int = 3,
-                 drop_rate: float = 0.2,
-                 nonlinearity: Callable = nn.ELU):
+                 v_kernel_size: int,
+                 h_kernel_size: int,
+                 latent_v_kernel_size: int,
+                 latent_h_kernel_size: int,
+                 drop_rate: float,
+                 pool_layers: tuple[bool] = None,
+                 nonlinearity: Callable = nn.ELU,
+                 **kwargs):
         """A Rayleigh-Bénard autoencoder based on standard 3D convolutions.
 
         Args:
@@ -75,15 +79,19 @@ class RB3DAutoencoder(nn.Sequential):
             encoder_channels (tuple): The channels of the encoder. Each entry results in a corresponding layer.
                 The decoder uses the channels in reversed order.
             latent_channels (int): The number of channels in the latent space.
-             v_kernel_size (int, optional): The vertical kernel size. Defaults to 3.
-            h_kernel_size (int, optional): The horizontal kernel size (in both directions). Defaults to 3.
-            drop_rate (float, optional): The drop rate used for dropout. Set to 0 to turn off dropout. 
-                Defaults to 0.2.
+            v_kernel_size (int): The vertical kernel size.
+            h_kernel_size (int): The horizontal kernel size (in both directions).
+            latent_v_kernel_size (int): The vertical kernel size applied on the latent space.
+            latent_h_kernel_size (int): The horizontal kernel size (in both directions) applied on the latent space.
+            drop_rate (float): The drop rate used for dropout. Set to 0 to turn off dropout.
+            pool_layers (tuple[bool], optional): A boolean tuple specifying the encoder layer to pool afterwards.
+                The same is used in reversed order for upsampling in the decoder. Defaults to pooling/upsampling
+                after each layer.
             nonlinearity (Callable, optional): The nonlinearity applied to the conv output. Set to `None` to
                 have no nonlinearity. Defaults to enn.ELU.
         """
-        
         super().__init__()
+        if pool_layers is None: pool_layers = [True]*len(encoder_channels)
         
         encoder_layers = []
         decoder_layers = []
@@ -95,14 +103,14 @@ class RB3DAutoencoder(nn.Sequential):
         ####   Encoder   ####
         #####################
         in_channels, in_dims = 4, rb_dims
-        for i, out_channels in enumerate(encoder_channels, 1):
+        for i, (out_channels, pool) in enumerate(zip(encoder_channels, pool_layers), 1):
             layer_drop_rate = 0 if i == 1 else drop_rate
             
             encoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
                                                out_channels=out_channels, 
                                                in_dims=in_dims, 
-                                               v_kernel_size=v_kernel_size, 
-                                               h_kernel_size=h_kernel_size,
+                                               v_kernel_size=latent_v_kernel_size, 
+                                               h_kernel_size=latent_h_kernel_size,
                                                input_drop_rate=layer_drop_rate, 
                                                nonlinearity=nonlinearity, 
                                                batch_norm=True))
@@ -110,13 +118,14 @@ class RB3DAutoencoder(nn.Sequential):
             self.out_shapes[f'EncoderConv{i}'] = [out_channels, *in_dims]
             self.layer_params[f'EncoderConv{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
-            encoder_layers.append(RBPooling(in_channels=in_channels, 
-                                            in_dims=in_dims, 
-                                            v_kernel_size=2, 
-                                            h_kernel_size=2))
+            if pool:
+                encoder_layers.append(RBPooling(in_channels=in_channels, 
+                                                in_dims=in_dims, 
+                                                v_kernel_size=2, 
+                                                h_kernel_size=2))
+                self.out_shapes[f'Pooling{i}'] = [out_channels, *encoder_layers[-1].out_dims]
+                self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             in_dims = encoder_layers[-1].out_dims
-            self.out_shapes[f'Pooling{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
             
         ######################
         #### Latent Space ####
@@ -137,7 +146,9 @@ class RB3DAutoencoder(nn.Sequential):
         #####################
         ####   Decoder   ####
         #####################
-        for i, out_channels in enumerate(reversed(encoder_channels), 1):            
+        decoder_channels = reversed(encoder_channels)
+        upsample_layers = reversed(pool_layers)
+        for i, (out_channels, upsample) in enumerate(zip(decoder_channels, upsample_layers), 1):
             decoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
                                                out_channels=out_channels, 
                                                in_dims=in_dims, 
@@ -150,10 +161,11 @@ class RB3DAutoencoder(nn.Sequential):
             self.out_shapes[f'DecoderConv{i}'] = [out_channels, *in_dims]
             self.layer_params[f'DecoderConv{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
             
-            decoder_layers.append(RBUpsampling(in_channels=in_channels, in_dims=in_dims, v_scale=2, h_scale=2))
+            if upsample:
+                decoder_layers.append(RBUpsampling(in_channels=in_channels, in_dims=in_dims, v_scale=2, h_scale=2))
+                self.out_shapes[f'Upsampling{i}'] = [out_channels, *decoder_layers[-1].out_dims]
+                self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
             in_dims = decoder_layers[-1].out_dims
-            self.out_shapes[f'Upsampling{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
         
         ######################
         ####    Output    ####

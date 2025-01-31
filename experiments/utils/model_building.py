@@ -51,7 +51,7 @@ def build_RBSteerableAutoencoder(simulation_name: str, rots: int, flips: int, en
                                   encoder_channels=encoder_channels,
                                   latent_channels=latent_channels//G_size,
                                   v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
-                                  drop_rate=drop_rate, nonlinearity=nonlinearity)
+                                  drop_rate=drop_rate, nonlinearity=nonlinearity, **kwargs)
             
 
 def build_RB3DSteerableAutoencoder(simulation_name: str, rots: int, flips: int, encoder_channels: tuple, 
@@ -70,7 +70,7 @@ def build_RB3DSteerableAutoencoder(simulation_name: str, rots: int, flips: int, 
                                     latent_channels=latent_channels//G_size,
                                     kernel_size=v_kernel_size,
                                     drop_rate=drop_rate, 
-                                    nonlinearity=nonlinearity)
+                                    nonlinearity=nonlinearity, **kwargs)
     
 
 def build_RBAutoencoder(simulation_name: str, encoder_channels: tuple, latent_channels: int, v_kernel_size: int, 
@@ -84,7 +84,7 @@ def build_RBAutoencoder(simulation_name: str, encoder_channels: tuple, latent_ch
                         encoder_channels=encoder_channels,
                         latent_channels=latent_channels,
                         v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
-                        drop_rate=drop_rate, nonlinearity=nonlinearity)
+                        drop_rate=drop_rate, nonlinearity=nonlinearity, **kwargs)
     
 
 def build_RB3DAutoencoder(simulation_name: str, encoder_channels: tuple, latent_channels: int, v_kernel_size: int, 
@@ -98,4 +98,4 @@ def build_RB3DAutoencoder(simulation_name: str, encoder_channels: tuple, latent_
                            encoder_channels=encoder_channels,
                            latent_channels=latent_channels,
                            v_kernel_size=v_kernel_size, h_kernel_size=h_kernel_size,
-                           drop_rate=drop_rate, nonlinearity=nonlinearity)
+                           drop_rate=drop_rate, nonlinearity=nonlinearity, **kwargs)
