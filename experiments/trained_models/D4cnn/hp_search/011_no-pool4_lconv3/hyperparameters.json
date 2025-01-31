@@ -1,19 +1,27 @@
 {
-    "model_type": "steerable3DCNN",
+    "model_type": "steerableCNN",
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
     "h_kernel_size": 5,
     "v_kernel_size": 5,
+    "latent_h_kernel_size": 3,
+    "latent_v_kernel_size": 3,
     "drop_rate": 0.2,
     "nonlinearity": "ELU",
     "flips": true,
     "rots": 4,
     "encoder_channels": [
-        24,
-        48,
-        96,
-        192
+        6,
+        12,
+        23,
+        46
     ],
     "latent_channels": 32,
+    "pool_layers": [
+        true,
+        true,
+        true,
+        false
+    ],
     "batch_size": 64,
     "n_train": 24060,
     "n_valid": 8020,
