@@ -7,7 +7,7 @@ EXPERIMENT_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
 from utils import data_reader
-from utils.evaluation import compute_loss
+from utils.evaluation import compute_loss, compute_loss_per_channel
 from utils.visualization import auto_encoder_animation
 from utils.evaluation import compute_latent_sensitivity
 
@@ -29,6 +29,8 @@ parser.add_argument('model_name', type=str)
 parser.add_argument('train_name', type=str)
 parser.add_argument('-eval_performance', action='store_true', default=False)
 parser.add_argument('-eval_performance_per_sim', action='store_true', default=False)
+parser.add_argument('-eval_performance_per_channel', action='store_true', default=False)
+parser.add_argument('-eval_performance_per_height', action='store_true', default=False)
 parser.add_argument('-check_equivariance', action='store_true', default=False)
 parser.add_argument('-animate', action='store_true', default=False)
 parser.add_argument('-compute_latent_sensitivity', action='store_true', default=False)
@@ -43,6 +45,8 @@ args = parser.parse_args()
 
 if not any([args.eval_performance, 
             args.eval_performance_per_sim,
+            args.eval_performance_per_channel,
+            args.eval_performance_per_height,
             args.check_equivariance, 
             args.animate, 
             args.compute_latent_sensitivity]):
@@ -50,6 +54,8 @@ if not any([args.eval_performance,
     print('Please add at least one of the following flags:')
     print('-eval_performance')
     print('-eval_performance_per_sim')
+    print('-eval_performance_per_channel')
+    print('-eval_performance_per_height')
     print('-check_equivariance')
     print('-animate')
     print('-compute_latent_sensitivity')
@@ -185,6 +191,76 @@ if args.eval_performance_per_sim:
     # update performances in file
     save_json(sim_performances, sim_performances_file)
 
+
+
+if args.eval_performance_per_channel:
+    print('Evaluating model performance per channel...')
+    
+    # read current performances
+    channel_performance_file = os.path.join(results_dir, 'performance_per_channel.json')
+    channel_performance = load_json(channel_performance_file)
+    
+    # update new performance metrics but keep other contents
+    channel_performance['mse'], channel_performance['mae'] = compute_loss_per_channel(model, test_loader,
+                                                          [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                          -1, N_TEST, args.batch_size)
+    channel_performance['rmse'] = list(np.sqrt(channel_performance['mse']))
+    
+    channel_performance['mse_train'], channel_performance['mae_train'] = compute_loss_per_channel(model,
+                                                                        train_loader,
+                                                                        [torch.nn.MSELoss(), 
+                                                                         torch.nn.L1Loss()], 
+                                                                        -1, N_TRAIN, args.batch_size)
+    channel_performance['rmse_train'] = list(np.sqrt(channel_performance['mse_train']))
+
+    print(f'MSE={channel_performance["mse"]}')
+    print(f'RMSE={channel_performance["rmse"]}')
+    print(f'MAE={channel_performance["mae"]}')
+    
+    print(f'MSE_train={channel_performance["mse_train"]}')
+    print(f'RMSE_train={channel_performance["rmse_train"]}')
+    print(f'MAE_train={channel_performance["mae_train"]}')
+    print(channel_performance, type(channel_performance))
+    # update performances in file
+    save_json(channel_performance, channel_performance_file)
+
+
+if args.eval_performance_per_height:
+    print('Evaluating model performance per height...')
+    
+    # read current performances
+    height_performance_file = os.path.join(results_dir, 'performance_per_height.json')
+    height_performance = load_json(height_performance_file)
+    
+    # update new performance metrics but keep other contents
+    # over all channels:
+    height_performance['mse'], height_performance['mae'] = compute_loss_per_channel(model, test_loader,
+                                                          [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                          -2, N_TEST, args.batch_size)
+    height_performance['rmse'] = list(np.sqrt(height_performance['mse']))
+    
+    height_performance['mse_train'], height_performance['mae_train'] = compute_loss_per_channel(model,
+                                                                        train_loader,
+                                                                        [torch.nn.MSELoss(), 
+                                                                         torch.nn.L1Loss()], 
+                                                                        -2, N_TRAIN, args.batch_size)
+    height_performance['rmse_train'] = list(np.sqrt(height_performance['mse_train']))
+    
+    # per channel:
+    height_performance['mse_per_channel'], height_performance['mae_per_channel'] = compute_loss_per_channel(model, test_loader,
+                                                          [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                          [-1, -2], N_TEST, args.batch_size)
+    height_performance['rmse_per_channel'] = np.sqrt(height_performance['mse_per_channel']).tolist()
+    
+    height_performance['mse_train_per_channel'], height_performance['mae_train_per_channel'] = compute_loss_per_channel(model,
+                                                                        train_loader,
+                                                                        [torch.nn.MSELoss(), 
+                                                                         torch.nn.L1Loss()], 
+                                                                        [-1, -2], N_TRAIN, args.batch_size)
+    height_performance['rmse_train_per_channel'] = np.sqrt(height_performance['mse_train_per_channel']).tolist()
+    
+    # update performances in file
+    save_json(height_performance, height_performance_file)
 
 
 if args.check_equivariance:

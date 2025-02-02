@@ -328,3 +328,60 @@ def plot_performance_per_sim(results_dir: str, model_names: str | list, train_na
     plt.xlabel('simulation')
     plt.legend()
     plt.grid(axis='y')
+    
+    
+def plot_performance_per_channel(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(8, 5))
+    
+    for model_name, train_name in zip(model_names, train_names):
+        results_file = os.path.join(results_dir, model_name, train_name, 'performance_per_channel.json')
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+        x = ['t', 'u', 'v', 'w']
+        plt.plot(x, results[metric], label=f'{model_name}/{train_name}', marker='o')
+    
+    plt.xticks(x)
+    plt.ylabel(metric.upper())
+    plt.xlabel('channel')
+    plt.legend()
+    plt.grid(axis='y')
+    
+    
+def plot_performance_per_height(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(8, 5))
+    
+    for model_name, train_name in zip(model_names, train_names):
+        results_file = os.path.join(results_dir, model_name, train_name, 'performance_per_height.json')
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+        plt.plot(results[metric], label=f'{model_name}/{train_name}')
+    
+    plt.ylabel(metric.upper())
+    plt.xlabel('height')
+    plt.legend()
+    plt.grid(axis='y')
+    
+    
+def plot_performance_per_height_and_channel(results_dir: str, model_names: str | list, train_names: str | list, 
+                                            metric: str, channel: int):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(8, 5))
+    
+    for model_name, train_name in zip(model_names, train_names):
+        results_file = os.path.join(results_dir, model_name, train_name, 'performance_per_height.json')
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+        plt.plot(results[f'{metric}_per_channel'][channel], label=f'{model_name}/{train_name}')
+    
+    plt.ylabel(metric.upper())
+    plt.xlabel('height')
+    plt.legend()
+    plt.grid(axis='y')

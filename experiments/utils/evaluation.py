@@ -1,35 +1,100 @@
 import math
 import torch
 from torch.utils.data import DataLoader
-from utils.data_reader import DataReader
+from .data_reader import DataReader
+
+from itertools import product
 from tqdm.auto import tqdm
 from collections.abc import Iterable
 
-import os
-
-def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
-                      samples: int = None, batch_size: int = None):
-    model.eval()
-
-    multiple_losses = isinstance(loss_fns, Iterable)
-    if not multiple_losses:
-        loss_fns = [loss_fns]
-        
+def compute_predictions(model: torch.nn.Module, loader: DataLoader,
+                        samples: int = None, batch_size: int = None):
     batches = None
     if samples is not None and batch_size is not None: 
         batches = math.ceil(samples/batch_size)
-
-    running_losses = [0]*len(loss_fns)
+        
+    model.eval()
     with torch.no_grad():
-        for i, (inputs, outputs) in tqdm(enumerate(test_loader, 1), total=batches, desc='computing loss', unit='batch'):
+        pbar = tqdm(loader, total=batches, desc='computing loss', unit='batch')
+        for inputs, outputs in pbar:
             predictions = model(inputs)
-            
-            for loss_nr, loss_fn in enumerate(loss_fns):
-                loss = loss_fn(outputs, predictions).item()
-                running_losses[loss_nr] += loss
-    
-    avg_losses = [running_loss / i for running_loss in running_losses]
+            yield inputs, predictions
 
+
+def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
+                 samples: int = None, batch_size: int = None):
+    multiple_losses = isinstance(loss_fns, Iterable)
+    if not multiple_losses: loss_fns = [loss_fns]
+        
+    predictions = compute_predictions(model, test_loader, samples, batch_size)
+    
+    running_losses = [0]*len(loss_fns)
+    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        for loss_nr, loss_fn in enumerate(loss_fns):
+            loss = loss_fn(outputs, predictions).item()
+            running_losses[loss_nr] += loss
+    
+    avg_losses = [running_loss / batch_nr for running_loss in running_losses]
+
+    return avg_losses if multiple_losses else avg_losses[0]
+
+
+def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
+                             axis: int, samples: int = None, batch_size: int = None):
+    multiple_losses = isinstance(loss_fns, Iterable)
+    if not multiple_losses: loss_fns = [loss_fns]
+        
+    predictions = compute_predictions(model, test_loader, samples, batch_size)
+    
+    running_losses = None
+    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        if running_losses is None:
+            running_losses = [[0]*outputs.shape[axis] for _ in loss_fns]
+            
+        for loss_nr, loss_fn in enumerate(loss_fns):
+            for channel in range(outputs.shape[axis]):
+                loss = loss_fn(outputs.select(axis, channel), 
+                               predictions.select(axis, channel)).item()
+                running_losses[loss_nr][channel] += loss
+    
+    avg_losses = running_losses.copy()
+    for loss_nr in range(len(loss_fns)):
+        for channel in range(outputs.shape[axis]):
+            avg_losses[loss_nr][channel] = running_losses[loss_nr][channel] / batch_nr
+
+    return avg_losses if multiple_losses else avg_losses[0]
+
+
+def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
+                             axes: int | list[int], samples: int = None, batch_size: int = None):
+    if type(axes) is int: axes = [axes]
+    
+    multiple_losses = isinstance(loss_fns, Iterable)
+    if not multiple_losses: loss_fns = [loss_fns]
+        
+    predictions = compute_predictions(model, test_loader, samples, batch_size)
+    
+    running_losses = None
+    ax_indices = None
+    ax_sizes = None
+    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        if ax_sizes is None:
+            ax_sizes = [outputs.shape[ax] for ax in axes]
+            running_losses = torch.zeros((len(loss_fns), *ax_sizes))
+            
+        for loss_nr, loss_fn in enumerate(loss_fns):
+            for ax_index in product(*(range(d) for d in ax_sizes)):
+                index_tuple = [slice(None)] * outputs.ndim  # Default to [:, :, ...]
+                for d, i in zip(axes, ax_index):
+                    index_tuple[d] = i  # Replace with specific indices
+                    
+                loss = loss_fn(outputs[tuple(index_tuple)], 
+                               predictions[tuple(index_tuple)]).item()
+                running_losses[(loss_nr, *ax_index)] += loss
+    
+    avg_losses = running_losses / batch_nr
+
+    avg_losses = avg_losses.tolist()
     return avg_losses if multiple_losses else avg_losses[0]
 
 
