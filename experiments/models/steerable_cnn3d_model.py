@@ -11,7 +11,7 @@ from escnn.nn import GeometricTensor
 from escnn.group import Representation
 from escnn.gspaces import GSpace
 
-from networks.steerable_cnn3d import RBSteerable3DConv, RBPooling, RBUpsampling, InnerBatchNorm3D
+from layers.conv.steerable_cnn3d import RBSteerable3DConv, RBPooling, RBUpsampling, InnerBatchNorm3D
 
 
 class _Steerable3DConvBlock(enn.SequentialModule):

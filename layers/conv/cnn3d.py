@@ -2,11 +2,11 @@ from torch import Tensor
 from torch import nn
 from torch.nn import functional as F
 
-from networks import network_utils
+from layers.conv import conv_utils
 from typing import Literal
 
 
-class RBConv(nn.Module):
+class RB3DConv(nn.Module):
     def __init__(self, 
                  in_channels: int, 
                  out_channels: int, 
@@ -15,13 +15,14 @@ class RBConv(nn.Module):
                  h_kernel_size: int,
                  v_stride: int = 1,
                  h_stride: int = 1,
+                 v_dilation: int = 1,
                  h_dilation: int = 1,
                  v_pad_mode: Literal['valid', 'zeros'] = 'zeros', 
                  h_pad_mode: Literal['valid', 'zeros', 'circular', 'reflect', 'replicate'] = 'circular',
                  bias: bool = True,
                  **kwargs):
-        """A Rayleigh-Bénard (RB) convolution uses convolutions with 3D kernels that are not
-        shared vertically due to RB not being vertically translation equivariant.
+        """A Rayleigh-Bénard (RB) 3D convolution wraps the standard 3D convolution (with vertical parameter
+        sharing) to match the interface of the other layers without vertical parameter sharing.
 
         Args:
             in_channels (int): The number of input channels.
@@ -31,6 +32,7 @@ class RBConv(nn.Module):
             h_kernel_size (int): The horizontal kernel size (in both directions).
             v_stride (int, optional): The vertical stride. Defaults to 1.
             h_stride (int, optional): The horizontal stride (in both directions). Defaults to 1.
+            v_dilation (int, optional): The vertical dilation. Defaults to 1.
             h_dilation (int, optional): The horizontal dilation. Defaults to 1.
             v_pad_mode (str, optional): The padding applied to the vertical dimension. Must be either 'valid'
                 for no padding or 'zero' for same padding with zeros. Defaults to 'zero'.
@@ -48,38 +50,33 @@ class RBConv(nn.Module):
         assert len(in_dims) == 3
         
         if h_pad_mode == 'valid':
-            h_padding = 0
+            h_padding = (0, 0)
             h_pad_mode = 'zeros'
         else:
-            # Conv2D only allows for the same amount of padding on both sides
+            # Conv3D only allows for the same amount of padding on both sides
             h_padding = [network_utils.required_same_padding(in_dims[i], h_kernel_size, h_stride, h_dilation, split=True)[1] 
                          for i in [0, 1]]
+            
+        self.v_padding = 0, 0
+        if v_pad_mode != 'valid':
+            self.v_padding = network_utils.required_same_padding(in_dims[2], v_kernel_size, v_stride, 
+                                                         dilation=v_dilation, split=True)
         
-        out_height = network_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
-                                            dilation=1, pad=v_pad_mode!='valid')
-        
-        # under the hood, this layer works by stacking the vertical neighborhoods of the input and then
-        # applying a grouped 2d convolution
-        conv2d_in_channels = out_height*v_kernel_size*in_channels # concatenated neighborhoods
-        conv2d_out_channels = out_height*out_channels
+        out_height = network_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, dilation=v_dilation, 
+                                            pad=v_pad_mode!='valid')
 
-        self.conv2d = nn.Conv2d(in_channels=conv2d_in_channels, 
-                                out_channels=conv2d_out_channels, 
-                                kernel_size=h_kernel_size, 
-                                padding=tuple(h_padding), 
-                                stride=h_stride, 
-                                dilation=h_dilation,
+        self.conv3d = nn.Conv3d(in_channels=in_channels, 
+                                out_channels=out_channels, 
+                                kernel_size=(h_kernel_size, h_kernel_size, v_kernel_size),
+                                padding=(*h_padding, 0),  # vertical padding is done separately
+                                stride=(h_stride, h_stride, 1), 
+                                dilation=(h_dilation, h_dilation, v_dilation),
                                 padding_mode=h_pad_mode,
-                                groups=out_height, 
                                 bias=bias,
                                 **kwargs)
         
         self.in_channels = in_channels
         self.out_channels = out_channels
-        
-        # combined height and channel dimension
-        self.conv2d_in_channels = conv2d_in_channels
-        self.conv2d_out_channels = conv2d_out_channels
         
         self.in_height = in_dims[-1]
         self.out_height = out_height
@@ -89,15 +86,10 @@ class RBConv(nn.Module):
                                                 pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
-        self.v_pad = v_pad_mode!='valid'
-        self.v_stride = v_stride
-        self.v_kernel_size = v_kernel_size
-        
         
     def forward(self, input: Tensor) -> Tensor:
-        """Applies the convolution to a input tensor of shape [batch, inHeight*inChannels, 
-        inWidth, inDepth] and results in a output tensor of shape [batch, outHeight*outChannels, 
-        outWidth, outDepth].
+        """Applies the convolution to a input tensor of shape [batch, inChannels, inWidth, inDepth, inHeight] 
+        and results in a output tensor of shape [batch, outChannels, outWidth, outDepth, outHeight].
 
         Args:
             input (Tensor): The tensor to which the convolution is applied.
@@ -105,45 +97,19 @@ class RBConv(nn.Module):
         Returns:
             Tensor: The output of the convolution.
         """
-        concatenated_neighborhoods = self._concat_vertical_neighborhoods(input)
-        return self.conv2d.forward(concatenated_neighborhoods)
+        # vertical padding (horizontal padding is done by conv operation)
+        input = F.pad(input, self.v_padding, 'constant', 0)
+        
+        return self.conv3d.forward(input)
         
         
-    def _concat_vertical_neighborhoods(self, tensor: Tensor) -> Tensor:
-        """Concatenates the local vertical neighborhoods along the height/channel dimension.
-
-        Args:
-            tensor (Tensor): Input tensor of shape [batch, inHeight*channels, width, depth].
-
-        Returns:
-            Tensor: Output tensor of shape [batch, outHeight*ksize*channels, width, depth].
-        """
-        # split height and channel dimension
-        tensor = tensor.reshape(-1, self.in_height, self.in_channels, *self.in_dims[:2]) 
-
-        if self.v_pad:
-            # pad height
-            padding = network_utils.required_same_padding(self.in_height, self.v_kernel_size, 
-                                                  self.v_stride, dilation=1, split=True)
-            tensor = F.pad(tensor, (*([0,0]*3), *padding)) # shape (b,padH,c,w,d)
-        
-        # compute neighborhoods
-        tensor = tensor.unfold(dimension=1, size=self.v_kernel_size, step=self.v_stride) # shape (b,outH,c,w,d,ksize)
-        
-        # concatenate neighboroods
-        tensor = tensor.permute(0, 1, 5, 2, 3, 4) # shape (b,outH,ksize,c,w,d)
-        tensor = tensor.flatten(start_dim=1, end_dim=3) # shape (b,outH*ksize*c,w,d)
-        
-        return tensor
-    
-    
     def train(self, *args, **kwargs):
-        return self.conv2d.train(*args, **kwargs)
+        return self.conv3d.train(*args, **kwargs)
     
     
     def eval(self, *args, **kwargs):
-        return self.conv2d.eval(*args, **kwargs)
-
+        return self.conv3d.eval(*args, **kwargs)
+    
 
 class RBPooling(nn.Module):
     def __init__(self, 
@@ -152,8 +118,7 @@ class RBPooling(nn.Module):
                  v_kernel_size: int, 
                  h_kernel_size: int, 
                  type: Literal['max', 'mean'] = 'max'):
-        """The RB Pooling layer applies 3D spatial pooling on the tensors with combined height 
-        and channel dimensions received from the RBConv layer.
+        """The RB Pooling layer applies 3D spatial pooling.
 
         Args:
             in_channels (int): The number of input channels.
@@ -180,27 +145,15 @@ class RBPooling(nn.Module):
         
         
     def forward(self, input: Tensor) -> Tensor:
-        """Applies 3D spatial pooling to a tensor of shape [batch, inHeight*channels, inWidth, inDepth].
+        """Applies 3D spatial pooling to a tensor of shape [batch, channels, inWidth, inDepth, inHeight].
 
         Args:
             input (Tensor): The tensor to apply pooling to.
 
         Returns:
-            Tensor: The pooled tensor of shape [batch, outHeight*channels, outWidth, outDepth]
-        """      
-        # transform tensor to be able to apply the torch pooling operation
-        tensor = input.reshape(-1, self.in_height, self.in_channels, *self.in_dims[:2])
-        tensor = tensor.permute(0, 2, 3, 4, 1)
-        
-        # perform pooling
-        pooled_tensor = self.pool_op(tensor, [self.h_kernel_size, self.h_kernel_size, self.v_kernel_size])
-        
-        # transform back into the original shape
-        pooled_tensor = pooled_tensor.permute(0, 4, 1, 2, 3)
-        batch, out_height, channels, out_width, out_depth = pooled_tensor.shape
-        pooled_tensor = pooled_tensor.reshape(batch, out_height*channels, out_width, out_depth)
-        
-        return pooled_tensor    
+            Tensor: The pooled tensor of shape [batch, channels, outWidth, outDepth, outHeight]
+        """
+        return self.pool_op(input, [self.h_kernel_size, self.h_kernel_size, self.v_kernel_size])         
     
 
 class RBUpsampling(nn.Module):
@@ -209,8 +162,7 @@ class RBUpsampling(nn.Module):
                  in_dims: tuple, 
                  v_scale: int, 
                  h_scale: int):
-        """The RB Upsampling layer applies 3D spatial upsampling on the tensors with combined height 
-        and channel dimensions received from the RBConv layer.
+        """The RB Upsampling layer applies 3D spatial upsampling.
 
         Args:
             in_channels (int): The number of input channels.
@@ -233,27 +185,13 @@ class RBUpsampling(nn.Module):
         self.h_scale = h_scale
         
         
-    def forward(self, input: Tensor) -> Tensor:    
-        """Applies 3D spatial upsampling to a tensor of shape [batch, inHeight*channels, inWidth, inDepth].
+    def forward(self, input: Tensor) -> Tensor:
+        """Applies 3D spatial upsampling to a tensor of shape [batch, channels, inWidth, inDepth, inHeight].
 
         Args:
             input (Tensor): The tensor to apply upsampling to.
 
         Returns:
-            Tensor: The upsampled tensor of shape [batch, outHeight*channels, outWidth, outDepth]
-        """     
-        # transform tensor to be able to apply the torch upsampling operation
-        tensor = input.reshape(-1, self.in_height, self.in_channels, *self.in_dims[:2])
-        tensor = tensor.permute(0, 2, 3, 4, 1)
-        
-        # perform upsampling
-        upsampled_tensor = F.interpolate(tensor, 
-                                         scale_factor=[self.h_scale, self.h_scale, self.v_scale], 
-                                         mode='trilinear')
-        
-        # transform back to original shape
-        upsampled_tensor = upsampled_tensor.permute(0, 4, 1, 2, 3)
-        batch, out_height, fieldsizes, out_width, out_depth = upsampled_tensor.shape
-        upsampled_tensor = upsampled_tensor.reshape(batch, out_height*fieldsizes, out_width, out_depth)
-        
-        return upsampled_tensor
+            Tensor: The upsampled tensor of shape [batch, channels, outWidth, outDepth, outHeight]
+        """   
+        return F.interpolate(input, scale_factor=[self.h_scale, self.h_scale, self.v_scale], mode='trilinear')

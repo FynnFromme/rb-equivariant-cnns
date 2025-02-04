@@ -7,7 +7,7 @@ from escnn.nn import FieldType, GeometricTensor
 from escnn.gspaces import GSpace
 from escnn.group import Representation
 
-from networks import network_utils
+from layers.conv import conv_utils
 from typing import Literal, Callable, Any
 
 

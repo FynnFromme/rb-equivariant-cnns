@@ -5,7 +5,7 @@ import experiments.models.model_utils as model_utils
 from collections import OrderedDict
 from typing import Callable
 
-from networks.cnn import RBConv, RBPooling, RBUpsampling
+from layers.conv.cnn import RBConv, RBPooling, RBUpsampling
 
 
 class _ConvBlock(nn.Sequential):
