@@ -80,15 +80,15 @@ class RBSteerable3DConv(enn.EquivariantModule):
             h_pad_mode = 'zeros'
         else:
             # Conv3D only allows for the same amount of padding on both sides
-            h_padding = [network_utils.required_same_padding(in_dims[i], kernel_size, stride, dilation, split=True)[1] 
+            h_padding = [conv_utils.required_same_padding(in_dims[i], kernel_size, stride, dilation, split=True)[1] 
                          for i in [0, 1]]
             
         self.v_padding = 0, 0
         if v_pad_mode != 'valid':
-            self.v_padding = network_utils.required_same_padding(in_dims[2], kernel_size, stride, 
+            self.v_padding = conv_utils.required_same_padding(in_dims[2], kernel_size, stride, 
                                                                  dilation, split=True)
         
-        out_height = network_utils.conv_output_size(in_dims[2], kernel_size, stride, dilation, 
+        out_height = conv_utils.conv_output_size(in_dims[2], kernel_size, stride, dilation, 
                                                     pad=v_pad_mode!='valid')
 
 
@@ -118,7 +118,7 @@ class RBSteerable3DConv(enn.EquivariantModule):
         self.out_height = out_height
         
         self.in_dims = in_dims
-        self.out_dims = [network_utils.conv_output_size(in_dims[i], kernel_size, stride, dilation, 
+        self.out_dims = [conv_utils.conv_output_size(in_dims[i], kernel_size, stride, dilation, 
                                                         pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
