@@ -56,6 +56,7 @@ def build_RBSteerableAutoencoder(simulation_name: str, rots: int, flips: int, en
 
 def build_RB3DSteerableAutoencoder(simulation_name: str, rots: int, flips: int, encoder_channels: tuple, 
                                    latent_channels: int, v_kernel_size: int, h_kernel_size: int, 
+                                   latent_v_kernel_size: int, latent_h_kernel_size: int,
                                    drop_rate: float, nonlinearity, **kwargs):
     horizontal_size = int(simulation_name.split('_')[0][1:])
     height = int(simulation_name.split('_')[2][1:])
@@ -69,6 +70,7 @@ def build_RB3DSteerableAutoencoder(simulation_name: str, rots: int, flips: int, 
                                     encoder_channels=encoder_channels,
                                     latent_channels=latent_channels//G_size,
                                     kernel_size=v_kernel_size,
+                                    latent_kernel_size=latent_v_kernel_size,
                                     drop_rate=drop_rate, 
                                     nonlinearity=nonlinearity, **kwargs)
     

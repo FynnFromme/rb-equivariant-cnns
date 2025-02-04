@@ -11,6 +11,8 @@ import matplotlib.colors as mcolors
 from mpl_toolkits.axes_grid1 import make_axes_locatable, ImageGrid
 from datetime import timedelta
 
+from collections import defaultdict
+
 from typing import Generator, Literal
 
 import os
@@ -350,7 +352,8 @@ def plot_performance_per_channel(results_dir: str, model_names: str | list, trai
     plt.grid(axis='y')
     
     
-def plot_performance_per_height(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+def plot_performance_per_height(results_dir: str, model_names: str | list, train_names: str | list, metric: str,
+                                channel: int = None):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
@@ -360,7 +363,11 @@ def plot_performance_per_height(results_dir: str, model_names: str | list, train
         results_file = os.path.join(results_dir, model_name, train_name, 'performance_per_height.json')
         with open(results_file, 'r') as f:
             results = json.load(f)
-        plt.plot(results[metric], label=f'{model_name}/{train_name}')
+            
+        if channel is not None:
+            plt.plot(results[f'{metric}_per_channel'][channel], label=f'{model_name}/{train_name}')
+        else:
+            plt.plot(results[metric], label=f'{model_name}/{train_name}')
     
     plt.ylabel(metric.upper())
     plt.xlabel('height')
@@ -368,20 +375,38 @@ def plot_performance_per_height(results_dir: str, model_names: str | list, train
     plt.grid(axis='y')
     
     
-def plot_performance_per_height_and_channel(results_dir: str, model_names: str | list, train_names: str | list, 
-                                            metric: str, channel: int):
+def plot_performance_per_hp(trains_dir: str, results_dir: str, model_names: str | list, train_names: str | list, 
+                            metric: str, hp: str, x_label: str = None):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
+    # group trainings of the same models
+    trainings_of_model = defaultdict(list)
+    for model, training in zip(model_names, train_names):
+        trainings_of_model[model].append(training)
+    
     fig = plt.figure(figsize=(8, 5))
     
-    for model_name, train_name in zip(model_names, train_names):
-        results_file = os.path.join(results_dir, model_name, train_name, 'performance_per_height.json')
-        with open(results_file, 'r') as f:
-            results = json.load(f)
-        plt.plot(results[f'{metric}_per_channel'][channel], label=f'{model_name}/{train_name}')
+    for model_name, trainings in trainings_of_model.items():
+        hp_values = []
+        performances = []
+        for train_name in trainings:
+            results_file = os.path.join(results_dir, model_name, train_name, 'performance.json')
+            with open(results_file, 'r') as f:
+                results = json.load(f)
+            performances.append(results[metric])
+            
+            hp_file = os.path.join(trains_dir, model_name, train_name, 'hyperparameters.json')
+            with open(hp_file, 'r') as f:
+                hps = json.load(f)
+            hp_values.append(hps[hp])
+        
+        # sort by hp value
+        hp_values, performances = zip(*sorted(zip(hp_values, performances)))
+        plt.plot(hp_values, performances, label=model_name, marker='o')
     
+    if x_label is None: x_label = hp
     plt.ylabel(metric.upper())
-    plt.xlabel('height')
+    plt.xlabel(x_label)
     plt.legend()
     plt.grid(axis='y')

@@ -246,6 +246,9 @@ train_hyperparameters = {
 
 hyperparameters = model_hyperparameters | train_hyperparameters
 
+hyperparameters['latent_size'] = np.prod(model.latent_shape)/np.prod(model.out_shapes["Input"]) * 100
+hyperparameters['parameters'] = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 hp_file = os.path.join(train_dir, 'hyperparameters.json')
 if loaded_epoch > 0 and os.path.isfile(hp_file):
     with open(hp_file, 'r') as f:
