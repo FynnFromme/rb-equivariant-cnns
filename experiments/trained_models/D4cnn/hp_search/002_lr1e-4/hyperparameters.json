@@ -6,6 +6,8 @@
     "n_valid": 8020,
     "h_kernel_size": 3,
     "v_kernel_size": 5,
+    "latent_h_kernel_size": 3,
+    "latent_v_kernel_size": 5,
     "drop_rate": 0.2,
     "nonlinearity": "ELU",
     "learning_rate": 0.0001,
@@ -27,5 +29,7 @@
     ],
     "latent_channels": 32,
     "epochs": 500,
-    "train_loss_in_eval": false
+    "train_loss_in_eval": false,
+    "latent_size": 0.1953125,
+    "parameters": 7191632
 }

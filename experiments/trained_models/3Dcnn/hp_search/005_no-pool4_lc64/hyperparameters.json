@@ -1,34 +1,40 @@
 {
-    "model_type": "steerableCNN",
+    "model_type": "3DCNN",
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
     "h_kernel_size": 5,
     "v_kernel_size": 5,
-    "latent_h_kernel_size": 5,
-    "latent_v_kernel_size": 5,
+    "latent_h_kernel_size": 3,
+    "latent_v_kernel_size": 3,
     "drop_rate": 0.2,
     "nonlinearity": "ELU",
     "flips": true,
     "rots": 4,
     "encoder_channels": [
-        6,
-        12,
-        24,
-        45
+        25,
+        50,
+        100,
+        200
     ],
-    "latent_channels": 32,
+    "latent_channels": 64,
+    "pool_layers": [
+        true,
+        true,
+        true,
+        false
+    ],
     "batch_size": 64,
     "n_train": 24060,
     "n_valid": 8020,
-    "learning_rate": 0.01,
+    "learning_rate": 0.001,
     "optimizer": "<class 'torch.optim.adam.Adam'>",
-    "lr_decay": 0.1,
-    "lr_decay_patience": 10,
+    "lr_decay": 0.5,
+    "lr_decay_patience": 5,
     "use_lr_scheduler": true,
     "weight_decay": 0,
     "early_stopping": 20,
     "early_stopping_threshold": 1e-05,
     "epochs": 500,
     "train_loss_in_eval": false,
-    "latent_size": 0.1953125,
-    "parameters": 7246508
+    "latent_size": 3.125,
+    "parameters": 7206832
 }
