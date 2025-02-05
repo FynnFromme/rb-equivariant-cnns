@@ -1,10 +1,10 @@
 from torch import nn
 from escnn import nn as enn
 
-from models.steerable_cnn_model import RBSteerableAutoencoder
-from models.steerable_cnn3d_model import RB3DSteerableAutoencoder
-from models.cnn_model import RBAutoencoder
-from models.cnn3d_model import RB3DAutoencoder
+from experiments.models.autoencoders.steerable_cnn_autoencoder import RBSteerableAutoencoder
+from experiments.models.autoencoders.steerable_cnn3d_autoencoder import RB3DSteerableAutoencoder
+from experiments.models.autoencoders.cnn_autoencoder import RBAutoencoder
+from experiments.models.autoencoders.cnn3d_autoencoder import RB3DAutoencoder
 
 from utils.flipRot2dOnR3 import flipRot2dOnR3
 
