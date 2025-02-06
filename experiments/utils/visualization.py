@@ -13,16 +13,17 @@ from datetime import timedelta
 
 from collections import defaultdict
 
-from typing import Generator, Literal
+from typing import Literal
+from torch.utils.data import DataLoader
 
 import os
 import json
 
 
-def _predict_batches(model: torch.nn.Module, data_generator: Generator, data_reader: DataReader):
+def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, data_reader: DataReader):
     """Calculates the models output of a batch of raw simulation data."""
-
-    for (inputs, _) in data_generator:
+    
+    for (inputs, _) in data_loader:
         # predict
         model.eval()
         preds = model(inputs)
@@ -37,7 +38,7 @@ def _predict_batches(model: torch.nn.Module, data_generator: Generator, data_rea
         yield inputs, preds, inputs_stand, preds_stand
 
 
-def auto_encoder_animation(model: torch.nn.Module, 
+def rb_model_animation(model: torch.nn.Module, 
                            axis: int,
                            anim_dir: str, 
                            anim_name: str, 
@@ -52,9 +53,9 @@ def auto_encoder_animation(model: torch.nn.Module,
     channel = ['t', 'u', 'v', 'w'].index(feature)
     
     data_reader = DataReader(sim_file, dataset, device, shuffle=False)
-    data_generator = data_reader(batch_size=batch_size)
+    data_loader = DataLoader(data_reader, batch_size=batch_size, num_workers=0, drop_last=False)
     
-    predicted_batches_gen = _predict_batches(model, data_generator, data_reader)
+    predicted_batches_gen = _predict_batches(model, data_loader, data_reader)
     batch_x, batch_y, batch_x_stand, batch_y_stand = next(predicted_batches_gen)
     in_batch_frame = 0
 

@@ -20,8 +20,8 @@ class RB3DConvLSTMCell(Module):
         h_dilation: int = 1,
         h_pad_mode: Literal['zeros', 'circular'] = 'circular',
         nonlinearity = torch.tanh,
-        droprate: float = 0,
-        recurrent_droprate: float = 0,
+        drop_rate: float = 0,
+        recurrent_drop_rate: float = 0,
         bias: bool = True
     ):
         super().__init__()
@@ -31,8 +31,8 @@ class RB3DConvLSTMCell(Module):
         self.input_channels = input_channels
         self.hidden_channels = hidden_channels
         self.nonlinearity = nonlinearity
-        self.droprate = droprate
-        self.recurrent_droprate = recurrent_droprate
+        self.drop_rate = drop_rate
+        self.recurrent_drop_rate = recurrent_drop_rate
         self.bias = bias
         
         self._dropout_mask = None
@@ -67,20 +67,20 @@ class RB3DConvLSTMCell(Module):
     def forward(self, input: torch.Tensor, state: tuple[torch.Tensor]):
         hidden_state, cell_state = state
         
-        if self.droprate > 0 and self.training:
+        if self.drop_rate > 0 and self.training:
             dropout_mask = self.get_dropout_mask(input)
             input = input * dropout_mask
         
-        if self.recurrent_droprate > 0 and self.training:
+        if self.recurrent_drop_rate > 0 and self.training:
             recurrent_dropout_mask = self.get_recurrent_dropout_mask(hidden_state)
             hidden_state = hidden_state * recurrent_dropout_mask
         
         gate_conv_input = torch.cat([input, hidden_state, cell_state], dim=1) # TODO concat at channel dim
         gate_conv_output = self.gate_conv(gate_conv_input)
         fz, iz, oz, = torch.split(gate_conv_output, self.hidden_channels, dim=1) # TODO split at channel dim
-        f = torch.sigmoid(fz)
-        i = torch.sigmoid(iz)
-        o = torch.sigmoid(oz)
+        f = torch.sigmoid(fz) #! needs to be equivariant activation for equivariant models
+        i = torch.sigmoid(iz) #! needs to be equivariant activation for equivariant models
+        o = torch.sigmoid(oz) #! needs to be equivariant activation for equivariant models
         
         update_conv_input = torch.cat([input, hidden_state], dim=1) # TODO concat at channel dim
         cell_update_z = self.cell_update_conv(update_conv_input)
@@ -99,12 +99,12 @@ class RB3DConvLSTMCell(Module):
     
     def get_dropout_mask(self, input):
         if self._dropout_mask is None:
-            self._dropout_mask = F.dropout(torch.ones_like(input), self.droprate) #! needs to be equivariant dropout for equivariant models
+            self._dropout_mask = F.dropout(torch.ones_like(input), self.drop_rate) #! needs to be equivariant dropout for equivariant models
         return self._dropout_mask
     
     def get_recurrent_dropout_mask(self, hidden_state):
         if self._recurrent_dropout_mask is None:
-            self._recurrent_dropout_mask = F.dropout(torch.ones_like(hidden_state), self.droprate) #! needs to be equivariant dropout for equivariant models
+            self._recurrent_dropout_mask = F.dropout(torch.ones_like(hidden_state), self.drop_rate) #! needs to be equivariant dropout for equivariant models
         return self._recurrent_dropout_mask
     
     def reset_dropout_masks(self):
@@ -128,8 +128,8 @@ class RB3DConvLSTM(Module):
         h_pad_mode: Literal['zeros', 'circular'] = 'circular',
         nonlinearity = torch.tanh,
         bias: bool = True,
-        droprate: float = 0,
-        recurrent_droprate: float = 0
+        drop_rate: float = 0,
+        recurrent_drop_rate: float = 0
     ):
         super().__init__()
         
@@ -158,8 +158,8 @@ class RB3DConvLSTM(Module):
                                                h_pad_mode=h_pad_mode,
                                                nonlinearity=nonlinearity,
                                                bias=bias,
-                                               droprate=droprate,
-                                               recurrent_droprate=recurrent_droprate))
+                                               drop_rate=drop_rate,
+                                               recurrent_drop_rate=recurrent_drop_rate))
             
             
     def forward(self, input, state=None, only_last_output=False):

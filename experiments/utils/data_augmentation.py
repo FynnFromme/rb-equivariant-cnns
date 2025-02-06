@@ -21,7 +21,16 @@ class DataAugmentation:
         
         transformed_inputs = []
         for input in inputs:
+            sequence = input.ndim == 6
+            if sequence:
+                b, s, w, d, h, c = input.shape
+                input = input.reshape(b*s, w, d, h, c)
+                
             transformed_input = self.transform(input, transformation)
+            
+            if sequence:
+                transformed_input = transformed_input.reshape(b, s, w, d, h, c)
+            
             transformed_inputs.append(transformed_input)
             
         return transformed_inputs[0] if len(inputs) == 1 else transformed_inputs

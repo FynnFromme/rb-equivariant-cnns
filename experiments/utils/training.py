@@ -19,7 +19,6 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 
 from .data_augmentation import DataAugmentation
-from .model_building import build_model
 
 
 def train(model: torch.nn.Module, 
@@ -42,7 +41,8 @@ def train(model: torch.nn.Module,
           plot: bool,
           early_stopping_threshold: float = 1e-5,
           initial_early_stop_count: int = 0,
-          train_loss_in_eval: bool = False):
+          train_loss_in_eval: bool = False,
+          model_forward_kwargs: dict = {}):
     
     tb_dir = os.path.join(os.path.dirname(os.path.abspath(models_dir)), 'runs')
     writer = SummaryWriter(os.path.join(tb_dir, model_name, train_name)) # Tensorboard writer
@@ -73,9 +73,9 @@ def train(model: torch.nn.Module,
     with tqdm(initial=start_epoch, total=start_epoch+epochs, desc='training', unit='epoch', dynamic_ncols=True) as pbar:
         for epoch in range(1+start_epoch, 1+start_epoch+epochs):
             epoch_start = time.time()
-            train_loss, valid_loss = train_epoch(train_loader, valid_loader, model, loss_fn, optimizer, 
-                                                data_augmentation, epoch, batch_size, train_samples,
-                                                train_loss_in_eval)
+            train_loss, valid_loss = train_loop(train_loader, valid_loader, model, loss_fn, optimizer, 
+                                                epoch, batch_size, train_samples, data_augmentation, 
+                                                train_loss_in_eval, model_forward_kwargs)
             epoch_duration = time.time() - epoch_start
             pbar.update(1)
             
@@ -134,27 +134,29 @@ def train(model: torch.nn.Module,
         plt.show()
     
 
-def train_epoch(train_loader: DataLoader, 
-                valid_loader: DataLoader, 
-                model: torch.nn.Module,
-                loss_fn, 
-                optimizer, 
-                data_augmentation: DataAugmentation, 
-                epochnum: int, 
-                batch_size: int, 
-                samples: int,
-                train_loss_in_eval: bool = False):
+def train_loop(train_loader: DataLoader, 
+               valid_loader: DataLoader, 
+               model: torch.nn.Module,
+               loss_fn, 
+               optimizer, 
+               epochnum: int, 
+               batch_size: int, 
+               samples: int,
+               data_augmentation: DataAugmentation = None, 
+               train_loss_in_eval: bool = False,
+               model_forward_kwargs: dict = {}):
     model.train()
     running_loss = 0.0
     
     with tqdm(total=math.ceil(samples/batch_size), desc=f'epoch {epochnum}', unit='batch', dynamic_ncols=True) as pbar:
-        for i, (x, _) in enumerate(train_loader, 1):
-            x = data_augmentation(x)
+        for i, (x, y) in enumerate(train_loader, 1):
+            if data_augmentation:
+                x, y = data_augmentation(x, y)
             
             # Compute prediction and loss
-            pred = model(x)
+            pred = model(x, **model_forward_kwargs)
             
-            loss = loss_fn(pred, x)
+            loss = loss_fn(pred, y)
             running_loss += loss.item()
         
             # Backpropagation
@@ -239,18 +241,6 @@ def load_trained_model(model, models_dir, model_name, train_name, optimizer=None
     print(f"Loaded state at epoch {epoch} with an early stop count of {early_stop_count}.")
     
     return early_stop_count, epoch
-
-
-def build_and_load_trained_model(models_dir: str, model_name: str, train_name: str, epoch: int = -1):
-    train_dir = os.path.join(models_dir, model_name, train_name)
-    
-    with open(os.path.join(train_dir, 'hyperparameters.json'), 'r') as f:
-        hyperparameters = json.load(f)
-        
-    model = build_model(**hyperparameters)
-    # load weights into the model (changes the model itself)
-    load_trained_model(model, models_dir, model_name, train_name, epoch=epoch, optimizer=None)
-    return model
     
     
 def remove_saved_models(directory):

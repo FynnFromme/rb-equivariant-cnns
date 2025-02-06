@@ -8,7 +8,7 @@ sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
 from utils import data_reader
 from utils.evaluation import compute_loss, compute_loss_per_channel
-from utils.visualization import auto_encoder_animation
+from utils.visualization import rb_model_animation
 from utils.evaluation import compute_latent_sensitivity
 
 import escnn
@@ -18,7 +18,6 @@ from argparse import ArgumentParser
 
 from tqdm.auto import tqdm
 
-
 ########################
 # Parsing arguments
 ########################
@@ -27,7 +26,10 @@ parser = ArgumentParser()
 
 parser.add_argument('model_name', type=str)
 parser.add_argument('train_name', type=str)
+parser.add_argument('-forecast_seq_length', type=int, default=10)
+
 parser.add_argument('-eval_performance', action='store_true', default=False)
+parser.add_argument('-eval_autoregressive_performance', action='store_true', default=False) # TODO
 parser.add_argument('-eval_performance_per_sim', action='store_true', default=False)
 parser.add_argument('-eval_performance_per_channel', action='store_true', default=False)
 parser.add_argument('-eval_performance_per_height', action='store_true', default=False)
@@ -44,6 +46,7 @@ parser.add_argument('-batch_size', type=int, default=64)
 args = parser.parse_args()
 
 if not any([args.eval_performance, 
+            args.eval_autoregressive_performance,
             args.eval_performance_per_sim,
             args.eval_performance_per_channel,
             args.eval_performance_per_height,
@@ -53,6 +56,7 @@ if not any([args.eval_performance,
     print('No evaluation selected')
     print('Please add at least one of the following flags:')
     print('-eval_performance')
+    print('-eval_autoregressive_performance')
     print('-eval_performance_per_sim')
     print('-eval_performance_per_channel')
     print('-eval_performance_per_height')
@@ -89,8 +93,19 @@ sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{args.simula
 N_test_avail, N_train_avail = data_reader.num_samples(sim_file, ['test', 'train'])
 N_TEST = min(args.n_test, N_test_avail) if args.n_test > 0 else N_test_avail
 N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
-test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
-train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN)
+
+if args.model_name.startswith('AE'):
+    test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
+    train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN)
+elif args.model_name.startswith('FC'):
+    test_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST, 
+                          forecasting=True, forecast_seq_length=args.forecast_seq_length)
+    train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN, 
+                          forecasting=True, forecast_seq_length=args.forecast_seq_length)
+else:
+    raise Exception('The model type (autoencoder or forecaster) must be specified in model_name')
+    
+
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
@@ -102,7 +117,7 @@ print(f'Using {N_TEST}/{N_test_avail} testing samples')
 # Load Model
 ########################
 
-from utils.training import build_and_load_trained_model
+from utils.model_building import build_and_load_trained_model
 models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 
 model = build_and_load_trained_model(models_dir, args.model_name, args.train_name, epoch=-1)
@@ -158,6 +173,14 @@ if args.eval_performance:
     # update performances in file
     save_json(performance, performance_file)
         
+        
+if args.eval_autoregressive_performance:
+    print('Computing autoregressive performance...')
+    if args.model_name.startswith('AE'):
+        print('Autoregressive performance can only be computed for forecasters')
+    else:
+        # TODO
+        raise NotImplementedError()
         
         
 if args.eval_performance_per_sim:
@@ -284,7 +307,7 @@ if args.animate:
         for feature in ['t', 'u', 'v', 'w']:
             for axis, dim in enumerate(['width', 'depth', 'height']):
                 slice = height//2 if axis == 2 else horizontal_size//2
-                auto_encoder_animation(slice=slice, fps=25, frames=args.animation_samples, feature=feature, 
+                rb_model_animation(slice=slice, fps=25, frames=args.animation_samples, feature=feature, 
                                     axis=axis, anim_dir=os.path.join(anim_dir, feature), anim_name=f'{dim}.mp4', 
                                     model=model, sim_file=sim_file, device=DEVICE)
                 pbar.update(1)
@@ -292,11 +315,13 @@ if args.animate:
 
 if args.compute_latent_sensitivity:
     print('Computing latent sensitivity...')
-    
-    SAMPLES = min(args.latent_sensitivity_samples, N_test_avail) if args.latent_sensitivity_samples > 0 else N_test_avail
-    sensitivity_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=SAMPLES)
-    
-    avg_sensitivity, avg_abs_sensitivity = compute_latent_sensitivity(model, sensitivity_dataset, 
-                                                                      samples=SAMPLES, 
-                                                                      save_dir=results_dir,
-                                                                      filename='latent_sensitivity')
+    if args.model_name.startswith('FC'):
+        print('Latent sensitivtiy can only be computed for autoencoders')
+    else:
+        SAMPLES = min(args.latent_sensitivity_samples, N_test_avail) if args.latent_sensitivity_samples > 0 else N_test_avail
+        sensitivity_dataset = data_reader.DataReader(sim_file, 'test', device=DEVICE, shuffle=False, samples=SAMPLES)
+        
+        avg_sensitivity, avg_abs_sensitivity = compute_latent_sensitivity(model, sensitivity_dataset, 
+                                                                        samples=SAMPLES, 
+                                                                        save_dir=results_dir,
+                                                                        filename='latent_sensitivity')

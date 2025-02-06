@@ -32,8 +32,8 @@ parser = ArgumentParser()
 
 # script parameters
 parser.add_argument('model', type=str, choices=['3DCNN', 'CNN', 'steerable3DCNN', 'steerableCNN'])
-parser.add_argument('epochs', type=int)
 parser.add_argument('train_name', type=str)
+parser.add_argument('epochs', type=int)
 parser.add_argument('-start_epoch', type=int, default=-1)
 parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
 parser.add_argument('-only_save_best', type=str2bool, default=True)
@@ -88,16 +88,12 @@ else:
     DEVICE = 'cpu'
     
     
-    
 ########################
 # Data
 ########################
 BATCH_SIZE = args.batch_size
 
 SIMULATION_NAME = args.simulation_name
-
-HORIZONTAL_SIZE = int(SIMULATION_NAME.split('_')[0][1:])
-HEIGHT = int(SIMULATION_NAME.split('_')[2][1:])
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{SIMULATION_NAME}.h5')
 
@@ -141,7 +137,7 @@ OPTIMIZER = torch.optim.Adam
 # Building Model
 ########################
 print('Building model...')
-from experiments.utils.model_building import build_model
+from experiments.utils.model_building import build_autoencoder
 
 
 FLIPS, ROTS = args.flips, args.rots
@@ -185,7 +181,7 @@ model_hyperparameters = {
     'pool_layers': POOL_LAYERS
 }
 
-model = build_model(**model_hyperparameters)
+model = build_autoencoder(**model_hyperparameters)
 
 model.to(DEVICE)
 model.summary()
@@ -199,6 +195,7 @@ model_name = {'steerableCNN': f'{"D" if FLIPS else "C"}{ROTS}cnn',
               'steerable3DCNN': f'3D-{"D" if FLIPS else "C"}{ROTS}cnn',
               'CNN': 'cnn',
               '3DCNN': '3Dcnn'}[args.model]
+model_name = os.path.join('AE', model_name)
 train_name = args.train_name
 train_dir = os.path.join(models_dir, model_name, train_name)
 os.makedirs(train_dir, exist_ok=True)
