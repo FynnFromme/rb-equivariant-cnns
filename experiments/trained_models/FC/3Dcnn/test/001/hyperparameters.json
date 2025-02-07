@@ -33,5 +33,7 @@
     "train_ae": false,
     "latent_size": 1.5625,
     "parameters": 6496480,
-    "parameters_w_ae": 13699328
+    "parameters_w_ae": 13699328,
+    "parallel_ops": true,
+    "residual_connection": false
 }

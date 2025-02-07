@@ -1,4 +1,4 @@
-from .data_reader import DataReader, num_samples
+from .dataset import RBDataset, num_samples
 
 import math
 import random
@@ -20,7 +20,7 @@ import os
 import json
 
 
-def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, data_reader: DataReader):
+def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, dataset: RBDataset):
     """Calculates the models output of a batch of raw simulation data."""
     
     for (inputs, _) in data_loader:
@@ -32,8 +32,8 @@ def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, data_reade
         preds_stand = preds.cpu().detach().numpy()
         
         # remove standardization
-        inputs = data_reader.de_standardize_batch(inputs_stand)
-        preds = data_reader.de_standardize_batch(preds_stand)
+        inputs = dataset.de_standardize_batch(inputs_stand)
+        preds = dataset.de_standardize_batch(preds_stand)
         
         yield inputs, preds, inputs_stand, preds_stand
 
@@ -52,10 +52,10 @@ def rb_model_animation(model: torch.nn.Module,
                            frames=np.inf):
     channel = ['t', 'u', 'v', 'w'].index(feature)
     
-    data_reader = DataReader(sim_file, dataset, device, shuffle=False)
-    data_loader = DataLoader(data_reader, batch_size=batch_size, num_workers=0, drop_last=False)
+    dataset = RBDataset(sim_file, dataset, device, shuffle=False)
+    data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=False)
     
-    predicted_batches_gen = _predict_batches(model, data_loader, data_reader)
+    predicted_batches_gen = _predict_batches(model, data_loader, dataset)
     batch_x, batch_y, batch_x_stand, batch_y_stand = next(predicted_batches_gen)
     in_batch_frame = 0
 
@@ -409,5 +409,26 @@ def plot_performance_per_hp(trains_dir: str, results_dir: str, model_names: str 
     if x_label is None: x_label = hp
     plt.ylabel(metric.upper())
     plt.xlabel(x_label)
+    plt.legend()
+    plt.grid(axis='y')
+
+
+def plot_autoregressive_performance(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+    if type(model_names) == str: model_names = [model_names]
+    if type(train_names) == str: train_names = [train_names]
+    
+    fig = plt.figure(figsize=(8, 5))
+    
+    for model_name, train_name in zip(model_names, train_names):
+        results_file = os.path.join(results_dir, model_name, train_name, 'autoregressive_performance.json')
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+            
+        x = range(1, len(results[metric])+1)
+        plt.plot(x, results[metric], label=f'{model_name}/{train_name} - test')
+        plt.plot(x, results[f'{metric}_train'], label=f'{model_name}/{train_name} - train')
+    
+    plt.ylabel(metric.upper())
+    plt.xlabel('autoregressive steps')
     plt.legend()
     plt.grid(axis='y')

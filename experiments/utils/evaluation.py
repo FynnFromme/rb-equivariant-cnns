@@ -1,7 +1,7 @@
 import math
 import torch
 from torch.utils.data import DataLoader
-from .data_reader import DataReader
+from .dataset import RBDataset
 
 import os
 from itertools import product
@@ -9,7 +9,8 @@ from tqdm.auto import tqdm
 from collections.abc import Iterable
 
 def compute_predictions(model: torch.nn.Module, loader: DataLoader,
-                        samples: int = None, batch_size: int = None):
+                        samples: int = None, batch_size: int = None,
+                        model_forward_kwargs: dict = {}):
     batches = None
     if samples is not None and batch_size is not None: 
         batches = math.ceil(samples/batch_size)
@@ -18,16 +19,17 @@ def compute_predictions(model: torch.nn.Module, loader: DataLoader,
     with torch.no_grad():
         pbar = tqdm(loader, total=batches, desc='computing loss', unit='batch')
         for inputs, outputs in pbar:
-            predictions = model(inputs)
-            yield inputs, predictions
+            predictions = model(inputs, **model_forward_kwargs)
+            yield outputs, predictions
 
 
 def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
-                 samples: int = None, batch_size: int = None):
+                 samples: int = None, batch_size: int = None,
+                 model_forward_kwargs: dict = {}):
     multiple_losses = isinstance(loss_fns, Iterable)
     if not multiple_losses: loss_fns = [loss_fns]
         
-    predictions = compute_predictions(model, test_loader, samples, batch_size)
+    predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
     
     running_losses = [0]*len(loss_fns)
     for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
@@ -41,39 +43,14 @@ def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns,
 
 
 def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
-                             axis: int, samples: int = None, batch_size: int = None):
-    multiple_losses = isinstance(loss_fns, Iterable)
-    if not multiple_losses: loss_fns = [loss_fns]
-        
-    predictions = compute_predictions(model, test_loader, samples, batch_size)
-    
-    running_losses = None
-    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
-        if running_losses is None:
-            running_losses = [[0]*outputs.shape[axis] for _ in loss_fns]
-            
-        for loss_nr, loss_fn in enumerate(loss_fns):
-            for channel in range(outputs.shape[axis]):
-                loss = loss_fn(outputs.select(axis, channel), 
-                               predictions.select(axis, channel)).item()
-                running_losses[loss_nr][channel] += loss
-    
-    avg_losses = running_losses.copy()
-    for loss_nr in range(len(loss_fns)):
-        for channel in range(outputs.shape[axis]):
-            avg_losses[loss_nr][channel] = running_losses[loss_nr][channel] / batch_nr
-
-    return avg_losses if multiple_losses else avg_losses[0]
-
-
-def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, loss_fns, 
-                             axes: int | list[int], samples: int = None, batch_size: int = None):
+                             axes: int | list[int], samples: int = None, batch_size: int = None,
+                             model_forward_kwargs: dict = {}):
     if type(axes) is int: axes = [axes]
     
     multiple_losses = isinstance(loss_fns, Iterable)
     if not multiple_losses: loss_fns = [loss_fns]
         
-    predictions = compute_predictions(model, test_loader, samples, batch_size)
+    predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
     
     running_losses = None
     ax_indices = None
@@ -99,7 +76,36 @@ def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, lo
     return avg_losses if multiple_losses else avg_losses[0]
 
 
-def compute_latent_sensitivity(model: torch.nn.Module, dataset: DataReader, samples: int = None, 
+def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int, test_loader: DataLoader, loss_fns, 
+                                samples: int = None, batch_size: int = None,
+                                model_forward_kwargs: dict = {}):
+    
+    
+    multiple_losses = isinstance(loss_fns, Iterable)
+    if not multiple_losses: loss_fns = [loss_fns]
+        
+    predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
+    
+    old_parallel_ops = model.parallel_ops
+    model.parallel_ops = False # compute sequence output sequentially due to memory constraint
+    
+    running_losses = torch.zeros(len(loss_fns), forecast_seq_length)
+    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        for loss_nr, loss_fn in enumerate(loss_fns):
+            for t in range(forecast_seq_length):
+                loss = loss_fn(outputs[:, t], predictions[:, t]).item()
+                running_losses[loss_nr, t] += loss
+    
+    model.parallel_ops = old_parallel_ops
+    
+    avg_losses = running_losses / batch_nr
+    avg_losses = avg_losses.tolist()
+    
+    return avg_losses if multiple_losses else avg_losses[0]
+
+
+
+def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, samples: int = None, 
                                save_dir: str = None, filename: str = None):
     dataloader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
 
