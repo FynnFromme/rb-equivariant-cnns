@@ -30,6 +30,7 @@ class RB3DConvLSTMCell(Module):
         
         self.input_channels = input_channels
         self.hidden_channels = hidden_channels
+        self.dims = dims
         self.nonlinearity = nonlinearity
         self.drop_rate = drop_rate
         self.recurrent_drop_rate = recurrent_drop_rate
@@ -191,11 +192,12 @@ class RB3DConvLSTM(Module):
             return layer_output, state
     
     
-    def autoregress(self, warmup_input, steps):
+    def autoregress(self, warmup_input, steps, output_whole_warmup=False):
         state = None
         input = warmup_input
         for i in range(steps):
-            output, state = self.forward(input, state=state, only_last_output=True)
+            only_last_output = i > 0 or not output_whole_warmup
+            output, state = self.forward(input, state=state, only_last_output=only_last_output)
             input = yield output
     
         

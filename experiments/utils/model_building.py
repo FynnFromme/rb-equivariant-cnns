@@ -73,7 +73,7 @@ def build_autoencoder(model_type: str, **hyperparameters):
 def build_forecaster(model_type: str, models_dir:str, **hyperparameters):
     match model_type:
         case '3DCNN':
-            return build_RB3DForecaster(model_type=model_type, models_dir=models_dir, **hyperparameters)
+            return build_RB3DForecaster(models_dir=models_dir, **hyperparameters)
         # TODO add other architectures
     raise NotImplementedError()
             
@@ -145,7 +145,7 @@ def build_RB3DAutoencoder(simulation_name: str, encoder_channels: tuple, latent_
                            drop_rate=drop_rate, nonlinearity=nonlinearity, **kwargs)
     
     
-def build_RB3DForecaster(model_type:str, models_dir: str, ae_model_name: str, ae_train_name: str, lstm_channels: int, v_kernel_size: int, 
+def build_RB3DForecaster(models_dir: str, ae_model_name: str, ae_train_name: str, lstm_channels: int, v_kernel_size: int, 
                          h_kernel_size: int, drop_rate: float, recurrent_drop_rate: float, nonlinearity, **kwargs):
     autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
     latent_channels, *latent_dims = autoencoder.latent_shape

@@ -1,7 +1,7 @@
 from torch import nn
 from torch import Tensor
 
-import experiments.models.model_utils as model_utils
+from experiments.models import model_utils
 from collections import OrderedDict
 from typing import Callable
 

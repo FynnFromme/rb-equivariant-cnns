@@ -5,7 +5,7 @@ import json
 EXPERIMENT_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
-from utils import data_reader
+from experiments.utils import dataset
 from utils.data_augmentation import DataAugmentation
 from torch.utils.data import DataLoader
 from utils import training
@@ -97,14 +97,14 @@ SIMULATION_NAME = args.simulation_name
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{SIMULATION_NAME}.h5')
 
-N_train_avail, N_valid_avail, N_test_avail = data_reader.num_samples(sim_file, ['train', 'valid', 'test'])
+N_train_avail, N_valid_avail, N_test_avail = dataset.num_samples(sim_file, ['train', 'valid', 'test'])
 
 # Reduce the amount of data manually
 N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
 N_VALID = min(args.n_valid, N_valid_avail) if args.n_valid > 0 else N_valid_avail
 
-train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN)
-valid_dataset = data_reader.DataReader(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID)
+train_dataset = dataset.RBDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN)
+valid_dataset = dataset.RBDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
 valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)

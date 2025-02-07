@@ -5,7 +5,7 @@ import json
 EXPERIMENT_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
-from utils import data_reader
+from experiments.utils import dataset
 from utils.data_augmentation import DataAugmentation
 from torch.utils.data import DataLoader
 from utils import training
@@ -41,9 +41,6 @@ parser.add_argument('-including_loaded_epochs', action='store_true', default=Fal
 parser.add_argument('-only_save_best', type=str2bool, default=True)
 parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
 
-parser.add_argument('-forecast_seq_length', type=int, default=10)
-parser.add_argument('-forecast_whole_sequence', dest='forecast_only_last', action='store_false', default=True)
-
 # data parameters
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_train', type=int, default=-1)
@@ -60,9 +57,15 @@ parser.add_argument('-recurrent_drop_rate', type=float, default=0)
 parser.add_argument('-nonlinearity', type=str, default='tanh', choices=['tanh', 'ReLU'])
 parser.add_argument('-lstm_channels', nargs='+', type=int, default=None)
 parser.add_argument('-weight_decay', type=float, default=0)
+parser.add_argument('-residual_connection', type=str2bool, default=True)
 
 # training hyperparameters
-parser.add_argument('-train_ae', action='store_true', default=False)
+parser.add_argument('-warmup_seq_length', type=int, default=10)
+parser.add_argument('-forecast_seq_length', type=int, default=3)
+parser.add_argument('-forecast_warmup', action='store_true', default=False)
+parser.add_argument('-no_parallel_ops', dest='parallel_ops', action='store_false', default=True)
+
+parser.add_argument('-train_autoencoder', action='store_true', default=False)
 parser.add_argument('-lr', type=float, default=1e-3)
 parser.add_argument('-no_lr_scheduler', dest='use_lr_scheduler', action='store_false', default=True)
 parser.add_argument('-lr_decay', type=float, default=0.5)
@@ -101,16 +104,16 @@ SIMULATION_NAME = args.simulation_name
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{SIMULATION_NAME}.h5')
 
-N_train_avail, N_valid_avail, N_test_avail = data_reader.num_samples(sim_file, ['train', 'valid', 'test'])
+N_train_avail, N_valid_avail, N_test_avail = dataset.num_samples(sim_file, ['train', 'valid', 'test'])
 
 # Reduce the amount of data manually
 N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
 N_VALID = min(args.n_valid, N_valid_avail) if args.n_valid > 0 else N_valid_avail
 
-train_dataset = data_reader.DataReader(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN, 
-                          forecasting=True, forecast_seq_length=args.forecast_seq_length, forecast_only_last=args.forecast_only_last)
-valid_dataset = data_reader.DataReader(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID, 
-                          forecasting=True, forecast_seq_length=args.forecast_seq_length, forecast_only_last=args.forecast_only_last)
+train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN, warmup_seq_length=args.warmup_seq_length, 
+                                          forecast_seq_length=args.forecast_seq_length, forecast_warmup=args.forecast_warmup)
+valid_dataset = dataset.RBForecastDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID, warmup_seq_length=args.warmup_seq_length, 
+                                          forecast_seq_length=args.forecast_seq_length, forecast_warmup=args.forecast_warmup)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
 valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
@@ -151,19 +154,19 @@ match args.model:
     case 'steerableCNN':
         print(f'Selected Steerable CNN with {ROTS=}, {FLIPS=}')
         lstm_channels = {
-            (True, 4): (16, 32, 64)
+            (True, 4): (32, 32)
             }[(FLIPS, ROTS)]
     case 'steerable3DCNN':
         print(f'Selected Steerable 3D CNN with {ROTS=}, {FLIPS=}')
         lstm_channels = {
-            (True, 4): (16, 32, 64)
+            (True, 4): (32, 32)
             }[(FLIPS, ROTS)]
     case 'CNN':
         print('Selected CNN')
-        lstm_channels = (16, 32, 64)
+        lstm_channels = (32, 32)
     case '3DCNN':
         print('Selected 3DCNN')
-        lstm_channels = (16, 32, 64)
+        lstm_channels = (32, 32)
         
 if args.lstm_channels is not None:
     lstm_channels = args.lstm_channels
@@ -181,7 +184,9 @@ model_hyperparameters = {
     'nonlinearity': NONLINEARITY,
     'flips': FLIPS,
     'rots': ROTS,
-    'lstm_channels': lstm_channels
+    'lstm_channels': lstm_channels,
+    'parallel_ops': args.parallel_ops,
+    'residual_connection': args.residual_connection
 }
 
 models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
@@ -243,9 +248,10 @@ train_hyperparameters = {
     'early_stopping_threshold': EARLY_STOPPING_THRESHOLD,
     'epochs': loaded_epoch+EPOCHS,
     'train_loss_in_eval': args.train_loss_in_eval,
+    'warmup_seq_length': args.warmup_seq_length,
     'forecast_seq_length': args.forecast_seq_length,
-    'forecast_only_last': args.forecast_only_last,
-    'train_ae': args.train_ae
+    'forecast_warmup': args.forecast_warmup,
+    'train_autoencoder': args.train_autoencoder
 }
 
 hyperparameters = model_hyperparameters | train_hyperparameters
@@ -271,7 +277,7 @@ else:
 ########################
 # Training
 ########################
-if args.train_ae:
+if args.train_autoencoder:
     for param in model.autoencoder.parameters():
         param.requires_grad = True
     model.autoencoder.train()
@@ -285,9 +291,8 @@ else:
 
 
 training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 
-               epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, 
-               optimizer=optimizer, lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, train_samples=train_dataset.num_sampels, 
-               batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
-               initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval,
-               early_stopping_threshold=EARLY_STOPPING_THRESHOLD, 
-               model_forward_kwargs={'only_last_output': args.forecast_only_last})
+               epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, optimizer=optimizer, 
+               lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, 
+               train_samples=train_dataset.num_sampels, batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
+               initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval, early_stopping_threshold=EARLY_STOPPING_THRESHOLD, 
+               model_forward_kwargs={'steps': args.forecast_seq_length, 'output_whole_warmup': args.forecast_warmup})
