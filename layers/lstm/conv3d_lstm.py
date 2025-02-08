@@ -76,14 +76,14 @@ class RB3DConvLSTMCell(Module):
             recurrent_dropout_mask = self.get_recurrent_dropout_mask(hidden_state)
             hidden_state = hidden_state * recurrent_dropout_mask
         
-        gate_conv_input = torch.cat([input, hidden_state, cell_state], dim=1) # TODO concat at channel dim
+        gate_conv_input = torch.cat([input, hidden_state, cell_state], dim=1)
         gate_conv_output = self.gate_conv(gate_conv_input)
-        fz, iz, oz, = torch.split(gate_conv_output, self.hidden_channels, dim=1) # TODO split at channel dim
-        f = torch.sigmoid(fz) #! needs to be equivariant activation for equivariant models
-        i = torch.sigmoid(iz) #! needs to be equivariant activation for equivariant models
-        o = torch.sigmoid(oz) #! needs to be equivariant activation for equivariant models
+        fz, iz, oz, = torch.split(gate_conv_output, self.hidden_channels, dim=1)
+        f = torch.sigmoid(fz)
+        i = torch.sigmoid(iz)
+        o = torch.sigmoid(oz)
         
-        update_conv_input = torch.cat([input, hidden_state], dim=1) # TODO concat at channel dim
+        update_conv_input = torch.cat([input, hidden_state], dim=1)
         cell_update_z = self.cell_update_conv(update_conv_input)
         cell_update = self.nonlinearity(cell_update_z)
         
@@ -100,12 +100,12 @@ class RB3DConvLSTMCell(Module):
     
     def get_dropout_mask(self, input):
         if self._dropout_mask is None:
-            self._dropout_mask = F.dropout(torch.ones_like(input), self.drop_rate) #! needs to be equivariant dropout for equivariant models
+            self._dropout_mask = F.dropout(torch.ones_like(input), self.drop_rate)
         return self._dropout_mask
     
     def get_recurrent_dropout_mask(self, hidden_state):
         if self._recurrent_dropout_mask is None:
-            self._recurrent_dropout_mask = F.dropout(torch.ones_like(hidden_state), self.drop_rate) #! needs to be equivariant dropout for equivariant models
+            self._recurrent_dropout_mask = F.dropout(torch.ones_like(hidden_state), self.drop_rate)
         return self._recurrent_dropout_mask
     
     def reset_dropout_masks(self):

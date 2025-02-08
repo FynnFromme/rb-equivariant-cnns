@@ -61,7 +61,7 @@ parser.add_argument('-residual_connection', type=str2bool, default=True)
 
 # training hyperparameters
 parser.add_argument('-warmup_seq_length', type=int, default=10)
-parser.add_argument('-forecast_seq_length', type=int, default=3)
+parser.add_argument('-forecast_seq_length', type=int, default=5)
 parser.add_argument('-forecast_warmup', action='store_true', default=False)
 parser.add_argument('-no_parallel_ops', dest='parallel_ops', action='store_false', default=True)
 
@@ -288,7 +288,7 @@ else:
     model.autoencoder.eval()
     # Override train to do nothing
     model.autoencoder.train = lambda self, mode=True: self
-
+    
 
 training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 
                epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, optimizer=optimizer, 

@@ -59,7 +59,7 @@ def train(model: torch.nn.Module,
         epoch_duration_values = []
         lr_values = []
     else:
-        best_loss = compute_loss(valid_loader, model, loss_fn)
+        best_loss = compute_loss(valid_loader, model, loss_fn, model_forward_kwargs)
         best_epoch = start_epoch
         with open(log_file, 'r') as f:
             log_dict = json.load(f)
@@ -150,17 +150,18 @@ def train_loop(train_loader: DataLoader,
     
     with tqdm(total=math.ceil(samples/batch_size), desc=f'epoch {epochnum}', unit='batch', dynamic_ncols=True) as pbar:
         for i, (x, y) in enumerate(train_loader, 1):
+            optimizer.zero_grad() # Resets gradient
+            
             if data_augmentation:
                 x, y = data_augmentation(x, y)
             
             # Compute prediction and loss
             pred = model(x, **model_forward_kwargs)
-            
+
             loss = loss_fn(pred, y)
             running_loss += loss.item()
         
             # Backpropagation
-            optimizer.zero_grad() # Resets gradient
             loss.backward() # Backpropagates the prediction loss
             optimizer.step() # Adjusts the parameters by the gradients collected in the backward pass
             
@@ -168,22 +169,22 @@ def train_loop(train_loader: DataLoader,
             pbar.update(1)
             
         if train_loss_in_eval:
-            train_loss = compute_loss(train_loader, model, loss_fn)
+            train_loss = compute_loss(train_loader, model, loss_fn, model_forward_kwargs)
         else:
             train_loss = running_loss / i
-        valid_loss = compute_loss(valid_loader, model, loss_fn)
+        valid_loss = compute_loss(valid_loader, model, loss_fn, model_forward_kwargs)
         
         pbar.set_postfix_str(f'{train_loss=:.4f}, {valid_loss=:.4f}')
     
     return train_loss, valid_loss
 
 
-def compute_loss(dataloader: DataLoader, model: torch.nn.Module, loss_fn):
+def compute_loss(dataloader: DataLoader, model: torch.nn.Module, loss_fn, model_forward_kwargs: dict = {}):
     model.eval()
     valid_loss = 0.0
     with torch.no_grad(): # Ensures that no gradients are computed during test mode
         for i, (x, y) in enumerate(dataloader, 1):
-            pred = model(x)
+            pred = model(x, **model_forward_kwargs)
             valid_loss += loss_fn(pred, y).item()
 
     return valid_loss / i

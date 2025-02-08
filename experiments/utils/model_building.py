@@ -9,6 +9,7 @@ from experiments.models.autoencoders.cnn_autoencoder import RBAutoencoder
 from experiments.models.autoencoders.cnn3d_autoencoder import RB3DAutoencoder
 
 from experiments.models.forecasters.cnn3d_forecaster import RB3DForecaster
+from experiments.models.forecasters.steerable_cnn_forecaster import RBSteerableForecaster
 
 from utils.flipRot2dOnR3 import flipRot2dOnR3
 from utils.training import load_trained_model
@@ -30,13 +31,13 @@ steerable_nonlinearity_mapping_ae = {
 }
 
 nonlinearity_mapping_fc = {
-    "relu": torch.relu,
+    "ReLU": torch.relu,
     "tanh": torch.tanh
 }
 
 steerable_nonlinearity_mapping_fc = {
-    "relu": None, # TODO
-    "tanh": None # TODO
+    "ReLU": "relu",
+    "tanh": "tanh"
 }
 
 
@@ -72,9 +73,10 @@ def build_autoencoder(model_type: str, **hyperparameters):
         
 def build_forecaster(model_type: str, models_dir:str, **hyperparameters):
     match model_type:
+        case 'steerableCNN':
+            return build_RBSteerableForecaster(models_dir=models_dir, **hyperparameters)
         case '3DCNN':
             return build_RB3DForecaster(models_dir=models_dir, **hyperparameters)
-        # TODO add other architectures
     raise NotImplementedError()
             
             
@@ -163,3 +165,25 @@ def build_RB3DForecaster(models_dir: str, ae_model_name: str, ae_train_name: str
                           drop_rate=drop_rate, 
                           recurrent_drop_rate=recurrent_drop_rate, 
                           **kwargs)
+    
+def build_RBSteerableForecaster(models_dir: str, ae_model_name: str, ae_train_name: str, rots: int, flips: int, 
+                                lstm_channels: int, v_kernel_size: int, h_kernel_size: int, drop_rate: float, 
+                                recurrent_drop_rate: float, nonlinearity, **kwargs):
+    autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
+    latent_channels, G_size, *latent_dims = autoencoder.latent_shape
+
+    nonlinearity = steerable_nonlinearity_mapping_fc[nonlinearity]
+    gspace = gspaces.flipRot2dOnR2 if flips else gspaces.rot2dOnR2
+    
+    return RBSteerableForecaster(gspace=gspace(N=rots),
+                                 autoencoder=autoencoder, 
+                                 num_layers=len(lstm_channels), 
+                                 input_channels=latent_channels, 
+                                 hidden_channels=lstm_channels, 
+                                 latent_dims=latent_dims, 
+                                 v_kernel_size=v_kernel_size, 
+                                 h_kernel_size=h_kernel_size,
+                                 nonlinearity=nonlinearity,
+                                 drop_rate=drop_rate, 
+                                 recurrent_drop_rate=recurrent_drop_rate, 
+                                 **kwargs)
