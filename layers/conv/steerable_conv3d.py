@@ -11,9 +11,6 @@ from escnn.group import Representation
 from layers.conv import conv_utils
 from typing import Literal, Callable, Any
 
-from layers.conv.escnn_library_fix import fix_conv_eval
-fix_conv_eval() # fixes "bug" in library
-
 class RBSteerable3DConv(enn.EquivariantModule):
     def __init__(self, 
                  gspace: GSpace, 
