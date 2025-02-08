@@ -68,6 +68,8 @@ class RBSteerableForecaster(enn.EquivariantModule):
                                            h_pad_mode='circular',
                                            bias=True)
         
+        self.bias = torch.nn.Parameter(torch.tensor(0.0)) #!
+        
         self.in_type, self.out_type = self.lstm.in_type, self.output_conv.out_type
         self.in_fields, self.out_fields = self.lstm.in_fields, self.output_conv.out_fields
         self.in_dims, self.out_dims = self.lstm.in_dims, self.output_conv.out_dims
@@ -76,15 +78,23 @@ class RBSteerableForecaster(enn.EquivariantModule):
     def forward(self, warmup_input, steps=1, output_whole_warmup=False):
         # input shape [batch, seq, width, depth, height, channels]
         
+        # return warmup_input + self.bias #! 
+        
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
 
         # encode into latent space
-        warmup_latent = self._encode(warmup_input)
-            
-        output_latent = self.forward_latent(warmup_latent, steps, output_whole_warmup)
+        #TODO warmup_latent = self._encode(warmup_input)
         
+        #! input b 1 48 48 32 4 -> latent b 1 6 6 4 32
+        warmup_latent = torch.repeat_interleave(warmup_input[:, :, :6, :6, :4, :], 8, 5) #!
+        
+        output_latent = self.forward_latent(warmup_latent, steps, output_whole_warmup)
+
         # decode into original space
-        output = self._decode(output_latent)
+        #TODO output = self._decode(output_latent)
+        
+        #! latent b 1 6 6 4 32 -> output b 1 48 48 32 4
+        output = output_latent[:, :, :, :, :, :4].repeat(1, 1, 8, 8, 8, 1) #!
         
         return output
     
@@ -99,7 +109,8 @@ class RBSteerableForecaster(enn.EquivariantModule):
         
         warmup_input = self._from_input_shape(warmup_input)
         warmup_length = warmup_input.shape[1]
-        warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
+        #TODO warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
+        warmup_input = GeometricTensor(warmup_input[:, -1], self.lstm.in_type) #!
         
         
         lstm_autoregressor = self.lstm.autoregress(warmup_input, steps, output_whole_warmup)
@@ -110,23 +121,30 @@ class RBSteerableForecaster(enn.EquivariantModule):
             lstm_out = lstm_autoregressor.send(lstm_input)
             out = self._apply_output_layer(lstm_out)
             
-            if self.residual_connection:
-                if i == 0:
-                    res_input = warmup_input if output_whole_warmup else [warmup_input[-1]]
-                else:
-                    res_input = lstm_input
-                out = [res + o for res, o in zip(res_input, out)]
+            #TODO if self.residual_connection:
+            #TODO     if i == 0:
+            #TODO         res_input = warmup_input if output_whole_warmup else [warmup_input[-1]]
+            #TODO     else:
+            #TODO         res_input = lstm_input
+            #TODO     out = [res + o for res, o in zip(res_input, out)]
             
-            outputs.extend(out)
-            lstm_input = [out[-1]]
+            #TODO outputs.extend(out)
+            outputs.append(out) #!
+            #TODO lstm_input = [out[-1]]
+            lstm_input = out #!
             
-        output = torch.stack([geom_tensor.tensor for geom_tensor in outputs], dim=1)
+        #TODO output = torch.stack([geom_tensor.tensor for geom_tensor in outputs], dim=1)
+        output = out.tensor.unsqueeze(1) #!
         
         output = self._to_output_shape(output)
         return output
     
     def _apply_output_layer(self, lstm_out: list[GeometricTensor]):  
         # shape: (b,h*c,w,d,seq)
+        
+        hidden_state = lstm_out #!
+        return self.output_conv(hidden_state) #!
+        
         seq_length = len(lstm_out)
         batch_size, _, w, d = lstm_out[0].shape
         
@@ -134,7 +152,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
             # apply output layer in parallel to whole sequence
             lstm_out_flat = self._merge_batch_and_seq_dim(lstm_out)
             
-            lstm_out_flat = self.dropout(lstm_out_flat)
+            # lstm_out_flat = self.dropout(lstm_out_flat)
             output_flat = self.output_conv(lstm_out_flat)
             
             outputs = self._split_batch_and_seq_dim(output_flat, batch_size)

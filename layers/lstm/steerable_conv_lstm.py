@@ -57,9 +57,105 @@ class RBSteerableConvLSTMCell(enn.EquivariantModule):
         self._dropout_mask = None
         self._recurrent_dropout_mask = None
         
-        self.gate_conv = RBSteerableConv(gspace=gspace,
-                                         in_fields=in_fields+2*hidden_fields, 
-                                         out_fields=3*hidden_fields, 
+        self.forget_input = RBSteerableConv(gspace=gspace,
+                                         in_fields=in_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.forget_hidden = RBSteerableConv(gspace=gspace,
+                                         in_fields=hidden_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.forget_cell = RBSteerableConv(gspace=gspace,
+                                         in_fields=hidden_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.input_input = RBSteerableConv(gspace=gspace,
+                                         in_fields=in_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.input_hidden = RBSteerableConv(gspace=gspace,
+                                         in_fields=hidden_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.input_cell = RBSteerableConv(gspace=gspace,
+                                         in_fields=hidden_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.output_input = RBSteerableConv(gspace=gspace,
+                                         in_fields=in_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.output_hidden = RBSteerableConv(gspace=gspace,
+                                         in_fields=hidden_fields, 
+                                         out_fields=hidden_fields, 
+                                         in_dims=dims,
+                                         v_kernel_size=v_kernel_size,
+                                         h_kernel_size=h_kernel_size,
+                                         v_stride=v_stride,
+                                         h_stride=h_stride,
+                                         h_dilation=h_dilation,
+                                         v_pad_mode='zero',
+                                         h_pad_mode=h_pad_mode,
+                                         bias=bias)
+        self.output_cell = RBSteerableConv(gspace=gspace,
+                                         in_fields=hidden_fields, 
+                                         out_fields=hidden_fields, 
                                          in_dims=dims,
                                          v_kernel_size=v_kernel_size,
                                          h_kernel_size=h_kernel_size,
@@ -70,8 +166,20 @@ class RBSteerableConvLSTMCell(enn.EquivariantModule):
                                          h_pad_mode=h_pad_mode,
                                          bias=bias)
         
-        self.cell_update_conv = RBSteerableConv(gspace=gspace,
-                                                in_fields=in_fields+hidden_fields, 
+        self.update_input = RBSteerableConv(gspace=gspace,
+                                                in_fields=in_fields, 
+                                                out_fields=hidden_fields, 
+                                                in_dims=dims,
+                                                v_kernel_size=v_kernel_size,
+                                                h_kernel_size=h_kernel_size,
+                                                v_stride=v_stride,
+                                                h_stride=h_stride,
+                                                h_dilation=h_dilation,
+                                                v_pad_mode='zero',
+                                                h_pad_mode=h_pad_mode,
+                                                bias=bias)
+        self.update_hidden = RBSteerableConv(gspace=gspace,
+                                                in_fields=hidden_fields, 
                                                 out_fields=hidden_fields, 
                                                 in_dims=dims,
                                                 v_kernel_size=v_kernel_size,
@@ -88,23 +196,42 @@ class RBSteerableConvLSTMCell(enn.EquivariantModule):
         hidden_state, cell_state = state
         
         # apply dropout - note: this is pointwise dropout and is only suited for fields that support pointwise operations
-        if self.drop_rate > 0 and self.training:
-            dropout_mask = self.get_dropout_mask(input)
-            input = GeometricTensor(input.tensor * dropout_mask, input.type)
-        if self.recurrent_drop_rate > 0 and self.training:
-            recurrent_dropout_mask = self.get_recurrent_dropout_mask(hidden_state)
-            hidden_state = GeometricTensor(hidden_state.tensor * recurrent_dropout_mask, hidden_state.type)
+        #TODO if self.drop_rate > 0 and self.training:
+        #TODO     dropout_mask = self.get_dropout_mask(input)
+        #TODO     input = GeometricTensor(input.tensor * dropout_mask, input.type)
+        #TODO if self.recurrent_drop_rate > 0 and self.training:
+        #TODO     recurrent_dropout_mask = self.get_recurrent_dropout_mask(hidden_state)
+        #TODO     hidden_state = GeometricTensor(hidden_state.tensor * recurrent_dropout_mask, hidden_state.type)
         
-        gate_conv_input = self._concat_fields([(input, self.in_fields), (hidden_state, self.hidden_fields), (cell_state, self.hidden_fields)])
-        gate_conv_output = self.gate_conv(gate_conv_input)
-        fz, iz, oz, = self._split_fields(gate_conv_output, self.hidden_fields)
-        f = self.sigmoid(fz)
-        i = self.sigmoid(iz)
-        o = self.sigmoid(oz)
+        #TODO gate_conv_input = self._concat_fields([(input, self.in_fields), (hidden_state, self.hidden_fields), (cell_state, self.hidden_fields)])
+        #TODO gate_conv_output = self.gate_conv(gate_conv_input)
+        #TODO fz, iz, oz, = self._split_fields(gate_conv_output, self.hidden_fields)
         
-        update_conv_input = self._concat_fields([(input, self.in_fields), (hidden_state, self.hidden_fields)])
-        cell_update_z = self.cell_update_conv(update_conv_input)
-        cell_update = self.nonlinearity(cell_update_z)
+        fz_i = self.forget_input(input) #!
+        fz_h = self.forget_hidden(hidden_state) #!
+        fz_c = self.forget_cell(cell_state) #!
+        iz_i = self.input_input(input) #!
+        iz_h = self.input_hidden(hidden_state) #!
+        iz_c = self.input_cell(cell_state) #!
+        oz_i = self.output_input(input) #!
+        oz_h = self.output_hidden(hidden_state) #!
+        oz_c = self.output_cell(cell_state) #!
+        
+        #TODO f = self.sigmoid(fz)
+        #TODO i = self.sigmoid(iz)
+        #TODO o = self.sigmoid(oz)
+        
+        f = self.sigmoid(fz_i+fz_h+fz_c) #!
+        i = self.sigmoid(iz_i+iz_h+iz_c) #!
+        o = self.sigmoid(oz_i+oz_h+oz_c) #!
+        
+        #TODO update_conv_input = self._concat_fields([(input, self.in_fields), (hidden_state, self.hidden_fields)])
+        #TODO cell_update_z = self.cell_update_conv(update_conv_input)
+        #TODO cell_update = self.nonlinearity(cell_update_z)
+        
+        update_z_i = self.update_input(input) #!
+        update_z_h = self.update_hidden(hidden_state) #!
+        cell_update = self.nonlinearity(update_z_i+update_z_h) #!
         
         new_cell_state = GeometricTensor(f.tensor * cell_state.tensor + i.tensor * cell_update.tensor, cell_state.type)
         new_hidden_state = GeometricTensor(o.tensor * self.nonlinearity(new_cell_state).tensor, hidden_state.type)
@@ -144,7 +271,8 @@ class RBSteerableConvLSTMCell(enn.EquivariantModule):
         return output_geom_tensors
     
     def init_state(self, batch_size: int, dims: tuple[int]):
-        device = next(self.gate_conv.parameters()).device
+        #TODOdevice = next(self.gate_conv.parameters()).device
+        device = next(self.forget_input.parameters()).device #!
         hidden_state = torch.zeros((batch_size, self.hidden_type.size, *dims[:2]), device=device)
         cell_state = torch.zeros((batch_size, self.hidden_type.size, *dims[:2]), device=device)
         
@@ -249,8 +377,10 @@ class RBSteerableConvLSTM(enn.EquivariantModule):
         """Note: this is not autoregressive (forced encoding)"""
         # shape [batch, inHeight*sum(inFieldsizes), inWidth, inDepth]
         
-        batch_size, _, width, depth = input[0].shape
-        assert input[0].type == self.in_type
+        #TODO batch_size, _, width, depth = input[0].shape
+        batch_size, _, width, depth = input.shape #!
+        #TODO assert input[0].type == self.in_type
+        assert input.type == self.in_type #!
         assert (width, depth) == tuple(self.dims[:2])
         
         if state is None:
@@ -259,20 +389,27 @@ class RBSteerableConvLSTM(enn.EquivariantModule):
         for cell in self.cells:
             cell.reset_dropout_masks()
             
-        seq_length = len(input)
+        #TODO seq_length = len(input)
         for i, cell in enumerate(self.cells):
             layer_hidden_states = []
-            for t in range(seq_length):
-                hidden_state, cell_state = cell(input[t], state[i])
-                state[i] = (hidden_state, cell_state)
-                layer_hidden_states.append(hidden_state)
-            input = layer_hidden_states
+            #TODO for t in range(seq_length):
+                #TODO hidden_state, cell_state = cell(input[t], state[i])
+                #TODO state[i] = (hidden_state, cell_state)
+                #TODO layer_hidden_states.append(hidden_state)
+            hidden_state, cell_state = cell(input, state[i]) #!
+            state[i] = (hidden_state, cell_state) #!
+            layer_hidden_states.append(hidden_state) #!
+            
+            #TODO input = layer_hidden_states
+            input = hidden_state #!
         
              
         if only_last_output:
-            return [layer_hidden_states[-1]], state
+            #TODO return [layer_hidden_states[-1]], state
+            return hidden_state, state #!
         else:
-            return layer_hidden_states, state
+            #TODO return layer_hidden_states, state
+            return hidden_state, state #!
     
     def autoregress(self, warmup_input: list[GeometricTensor], steps, output_whole_warmup=False):
         state = None
