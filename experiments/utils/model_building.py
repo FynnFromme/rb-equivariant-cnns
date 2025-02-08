@@ -41,11 +41,14 @@ steerable_nonlinearity_mapping_fc = {
 }
 
 
-def build_and_load_trained_model(models_dir: str, model_name: str, train_name: str, epoch: int = -1):
+def build_and_load_trained_model(models_dir: str, model_name: str, train_name: str, epoch: int = -1,
+                                 override_hps: dict = {}):
     train_dir = os.path.join(models_dir, model_name, train_name)
     
     with open(os.path.join(train_dir, 'hyperparameters.json'), 'r') as f:
         hyperparameters = json.load(f)
+        
+    hyperparameters.update(override_hps)
         
     if model_name.startswith('AE') or models_dir.endswith('AE'):
         model = build_autoencoder(**hyperparameters)
@@ -148,9 +151,14 @@ def build_RB3DAutoencoder(simulation_name: str, encoder_channels: tuple, latent_
     
     
 def build_RB3DForecaster(models_dir: str, ae_model_name: str, ae_train_name: str, lstm_channels: int, v_kernel_size: int, 
-                         h_kernel_size: int, drop_rate: float, recurrent_drop_rate: float, nonlinearity, **kwargs):
+                         h_kernel_size: int, drop_rate: float, recurrent_drop_rate: float, nonlinearity, 
+                         include_autoencoder: bool, **kwargs):
     autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
     latent_channels, *latent_dims = autoencoder.latent_shape
+    
+    if not include_autoencoder:
+        del autoencoder
+        autoencoder = None
     
     nonlinearity = nonlinearity_mapping_fc[nonlinearity]
     
@@ -168,9 +176,13 @@ def build_RB3DForecaster(models_dir: str, ae_model_name: str, ae_train_name: str
     
 def build_RBSteerableForecaster(models_dir: str, ae_model_name: str, ae_train_name: str, rots: int, flips: int, 
                                 lstm_channels: int, v_kernel_size: int, h_kernel_size: int, drop_rate: float, 
-                                recurrent_drop_rate: float, nonlinearity, **kwargs):
+                                recurrent_drop_rate: float, nonlinearity, include_autoencoder: bool, **kwargs):
     autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
     latent_channels, G_size, *latent_dims = autoencoder.latent_shape
+    
+    if not include_autoencoder:
+        del autoencoder
+        autoencoder = None
 
     nonlinearity = steerable_nonlinearity_mapping_fc[nonlinearity]
     gspace = gspaces.flipRot2dOnR2 if flips else gspaces.rot2dOnR2

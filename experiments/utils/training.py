@@ -96,7 +96,7 @@ def train(model: torch.nn.Module,
                 best_epoch = epoch
                 best_weights = deepcopy(model.state_dict())
                 best_optim = optimizer.state_dict()
-                pbar.set_postfix_str(f'{best_epoch=:}, {train_loss=:.4f}, {valid_loss=:.4f}')
+                pbar.set_postfix_str(f'{best_epoch=:}, {train_loss=:.5f}, {valid_loss=:.5f}')
                 
                 if only_save_best:
                     remove_saved_models(output_dir)
@@ -165,7 +165,7 @@ def train_loop(train_loader: DataLoader,
             loss.backward() # Backpropagates the prediction loss
             optimizer.step() # Adjusts the parameters by the gradients collected in the backward pass
             
-            pbar.set_postfix_str(f'train_loss={running_loss/i:.4f}')
+            pbar.set_postfix_str(f'train_loss={running_loss/i:.5f}')
             pbar.update(1)
             
         if train_loss_in_eval:
@@ -174,7 +174,7 @@ def train_loop(train_loader: DataLoader,
             train_loss = running_loss / i
         valid_loss = compute_loss(valid_loader, model, loss_fn, model_forward_kwargs)
         
-        pbar.set_postfix_str(f'{train_loss=:.4f}, {valid_loss=:.4f}')
+        pbar.set_postfix_str(f'{train_loss=:.5f}, {valid_loss=:.5f}')
     
     return train_loss, valid_loss
 
@@ -234,7 +234,7 @@ def load_trained_model(model, models_dir, model_name, train_name, optimizer=None
             raise Exception('model not saved for that epoch')
     
     checkpoint = torch.load(file_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     if optimizer: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     early_stop_count = checkpoint['early_stop_count']
     model.eval()

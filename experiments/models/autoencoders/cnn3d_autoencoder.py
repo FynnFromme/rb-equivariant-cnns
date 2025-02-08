@@ -141,7 +141,7 @@ class RB3DAutoencoder(nn.Sequential):
         in_channels = encoder_layers[-1].out_channels
         self.out_shapes[f'LatentConv'] = [latent_channels, *in_dims]
         self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
-        self.latent_shape = [latent_channels, *in_dims]
+        self.latent_shape = [*in_dims, latent_channels]
             
         #####################
         ####   Decoder   ####

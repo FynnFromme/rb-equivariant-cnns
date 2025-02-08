@@ -10,6 +10,8 @@ from utils import dataset
 from utils.evaluation import compute_loss, compute_loss_per_channel, compute_autoregressive_loss
 from utils.visualization import rb_model_animation
 from utils.evaluation import compute_latent_sensitivity
+from utils.model_building import build_and_load_trained_model
+from utils.latent_dataset import compute_latent_dataset
 
 import escnn
 from torch.utils.data import DataLoader
@@ -27,6 +29,10 @@ parser = ArgumentParser()
 parser.add_argument('model_name', type=str)
 parser.add_argument('train_name', type=str)
 
+parser.add_argument('-ae_model_name', type=str)
+parser.add_argument('-ae_train_name', type=str)
+
+parser.add_argument('-loss_on_latent', action='store_true', default=False)
 parser.add_argument('-warmup_seq_length', type=int, default=10)
 parser.add_argument('-forecast_seq_length', type=int, default=3)
 parser.add_argument('-autoregressive_warmup_seq_length', type=int, default=50)
@@ -89,7 +95,7 @@ else:
     print('Failed to find GPU. Will use CPU.')
     DEVICE = 'cpu'
     
-    
+models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 ########################
 # Data
 ########################
@@ -103,6 +109,18 @@ if args.model_name.startswith('AE'):
     test_dataset = dataset.RBDataset(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST)
     train_dataset = dataset.RBDataset(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN)
 elif args.model_name.startswith('FC'):
+    if args.loss_on_latent:
+        latent_file = os.path.join(EXPERIMENT_DIR, 'latent_datasets', args.ae_model_name, 
+                                   args.ae_train_name, f'{args.simulation_name}.h5')
+        if not os.path.isfile(latent_file):
+            print('Loading autoencoder to precompute latent dataset')
+            autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', args.ae_model_name), args.ae_train_name)
+            autoencoder.to(DEVICE)
+            print('Precompute latent dataset')
+            compute_latent_dataset(autoencoder, latent_file, sim_file, device=DEVICE, batch_size=args.batch_size)
+            del autoencoder
+        sim_file = latent_file
+        
     test_dataset = dataset.RBForecastDataset(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST, 
                                              warmup_seq_length=args.warmup_seq_length, forecast_seq_length=args.forecast_seq_length)
     train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN, 
@@ -128,14 +146,12 @@ print(f'Using {N_TEST}/{N_test_avail} testing samples')
 ########################
 # Load Model
 ########################
+is_forecast_model = args.model_name.startswith('FC')
 
-from utils.model_building import build_and_load_trained_model
-models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
-
-model = build_and_load_trained_model(models_dir, args.model_name, args.train_name, epoch=-1)
+override_hps = {'include_autoencoder': True, 'parallel_ops': False} if is_forecast_model else {}
+model = build_and_load_trained_model(models_dir, args.model_name, args.train_name, epoch=-1, override_hps=override_hps)
 model.to(DEVICE) 
    
-is_forecast_model = args.model_name.startswith('FC')
 model_forward_kwargs = {'steps': args.forecast_seq_length} if is_forecast_model else {}
    
    

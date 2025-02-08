@@ -3,6 +3,7 @@ data/datasets/**/*.h5
 experiments/results/**/animations/*
 experiments/results/**/latent_sensitivity.pt
 experiments/trained_models/**/epoch*.tar
+experiments/latent_datasets/**/*.h5
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

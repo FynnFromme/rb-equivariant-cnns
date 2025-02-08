@@ -24,6 +24,7 @@ class RB3DForecaster(Module):
         drop_rate: float = 0,
         recurrent_drop_rate: float = 0,
         parallel_ops: bool = True, # applies autoencoder and output layer in parallel (might result in out of memory for large sequences)
+        train_autoencoder: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -34,6 +35,7 @@ class RB3DForecaster(Module):
         self.residual_connection = residual_connection
         
         self.autoencoder = autoencoder
+        self.train_autoencoder = train_autoencoder
         self.parallel_ops = parallel_ops
         
         self.lstm = RB3DConvLSTM(num_layers=num_layers, 
@@ -67,12 +69,21 @@ class RB3DForecaster(Module):
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
         
         # encode into latent space
-        warmup_latent = self._encode(warmup_input)
+        if self.autoencoder is not None:
+            warmup_latent = self._encode(warmup_input)
+        
+            if not self.train_autoencoder:
+                warmup_latent = warmup_latent.detach()
+        else:
+            warmup_latent = warmup_input
             
         output_latent = self.forward_latent(warmup_latent, steps, output_whole_warmup)
         
         # decode into original space
-        output = self._decode(output_latent)
+        if self.autoencoder is not None:
+            output = self._decode(output_latent)
+        else:
+            output = output_latent
         
         return output
     
@@ -190,29 +201,29 @@ class RB3DForecaster(Module):
     
     def summary(self):   
         # LSTM   
-        fc_out_shapes = []
-        fc_layer_params = []
+        out_shapes = []
+        layer_params = []
         for i, cell in enumerate(self.lstm.cells, 1):
-            fc_out_shapes.append((f'LSTM{i}', [cell.hidden_channels, *cell.dims]))
-            fc_layer_params.append((f'LSTM{i}', model_utils.count_trainable_params(cell)))
+            out_shapes.append((f'LSTM{i}', [cell.hidden_channels, *cell.dims]))
+            layer_params.append((f'LSTM{i}', model_utils.count_trainable_params(cell)))
             
-        fc_out_shapes.append(('LSTM-Head', [self.input_channels, *self.latent_dims]))
-        fc_layer_params.append((f'LSTM-Head', model_utils.count_trainable_params(self.output_conv)))
+        out_shapes.append(('LSTM-Head', [self.input_channels, *self.latent_dims]))
+        layer_params.append((f'LSTM-Head', model_utils.count_trainable_params(self.output_conv)))
+        latent_shape = out_shapes[-1][1]
         
         # Autoencoder
-        ae_out_shapes = list(self.autoencoder.out_shapes.items())
-        ae_layer_params = list(self.autoencoder.layer_params.items())
+        if self.autoencoder is not None:
+            ae_out_shapes = list(self.autoencoder.out_shapes.items())
+            ae_layer_params = list(self.autoencoder.layer_params.items())
+            
+            decoder_start = list(self.autoencoder.out_shapes.keys()).index('LatentConv')+1
+            
+            encoder_out_shapes = ae_out_shapes[:decoder_start]
+            decoder_out_shapes = ae_out_shapes[decoder_start:]
+            encoder_layer_params = ae_layer_params[:decoder_start]
+            decoder_layer_params = ae_layer_params[decoder_start:]
+            
+            out_shapes = encoder_out_shapes + out_shapes + decoder_out_shapes
+            layer_params = encoder_layer_params + layer_params + decoder_layer_params
         
-        decoder_start = list(self.autoencoder.out_shapes.keys()).index('LatentConv')+1
-        
-        encoder_out_shapes = ae_out_shapes[:decoder_start]
-        decoder_out_shapes = ae_out_shapes[decoder_start:]
-        encoder_layer_params = ae_layer_params[:decoder_start]
-        decoder_layer_params = ae_layer_params[decoder_start:]
-        
-        # Total
-        out_shapes = OrderedDict(encoder_out_shapes + fc_out_shapes + decoder_out_shapes)
-        layer_params = OrderedDict(encoder_layer_params + fc_layer_params + decoder_layer_params)
-        latent_shape = encoder_out_shapes[-1][1]
-        
-        model_utils.summary(self, out_shapes, layer_params, latent_shape)
+        model_utils.summary(self, OrderedDict(out_shapes), OrderedDict(layer_params), latent_shape)

@@ -7,13 +7,15 @@ sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
 from experiments.utils import dataset
 from utils.data_augmentation import DataAugmentation
+from utils.latent_dataset import compute_latent_dataset
 from torch.utils.data import DataLoader
+from experiments.utils.model_building import build_forecaster, build_and_load_trained_model
 from utils import training
 
 from escnn import gspaces
+from escnn import nn as enn
 
 from argparse import ArgumentParser, ArgumentTypeError
-import itertools
 
 ########################
 # Parsing arguments
@@ -50,8 +52,8 @@ parser.add_argument('-batch_size', type=int, default=64)
 # model hyperparameters
 parser.add_argument('-flips', type=bool, default=True)
 parser.add_argument('-rots', type=int, default=4)
-parser.add_argument('-v_kernel_size', type=int, default=5)
-parser.add_argument('-h_kernel_size', type=int, default=5)
+parser.add_argument('-v_kernel_size', type=int, default=3)
+parser.add_argument('-h_kernel_size', type=int, default=3)
 parser.add_argument('-drop_rate', type=float, default=0.2)
 parser.add_argument('-recurrent_drop_rate', type=float, default=0)
 parser.add_argument('-nonlinearity', type=str, default='tanh', choices=['tanh', 'ReLU'])
@@ -64,6 +66,7 @@ parser.add_argument('-warmup_seq_length', type=int, default=10)
 parser.add_argument('-forecast_seq_length', type=int, default=5)
 parser.add_argument('-forecast_warmup', action='store_true', default=False)
 parser.add_argument('-parallel_ops', action='store_true', default=False)
+parser.add_argument('-loss_on_decoded', action='store_true', default=False)
 
 parser.add_argument('-train_autoencoder', action='store_true', default=False)
 parser.add_argument('-lr', type=float, default=1e-3)
@@ -74,6 +77,9 @@ parser.add_argument('-early_stopping', type=int, default=20)
 parser.add_argument('-early_stopping_threshold', type=float, default=1e-5)
 
 args = parser.parse_args()
+
+if args.train_autoencoder and not args.loss_on_decoded:
+    raise Exception('When training the autoencoder, the loss must be computed on the decoded output.')
 
 ########################
 # Seed and GPU
@@ -94,7 +100,7 @@ else:
     DEVICE = 'cpu'
     
     
-    
+models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 ########################
 # Data
 ########################
@@ -109,6 +115,18 @@ N_train_avail, N_valid_avail, N_test_avail = dataset.num_samples(sim_file, ['tra
 # Reduce the amount of data manually
 N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
 N_VALID = min(args.n_valid, N_valid_avail) if args.n_valid > 0 else N_valid_avail
+
+if not args.loss_on_decoded:
+    latent_file = os.path.join(EXPERIMENT_DIR, 'latent_datasets', args.ae_model_name, 
+                               args.ae_train_name, f'{SIMULATION_NAME}.h5')
+    if not os.path.isfile(latent_file):
+        print('Loading autoencoder to precompute latent dataset')
+        autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', args.ae_model_name), args.ae_train_name)
+        autoencoder.to(DEVICE)
+        print('Precompute latent dataset')
+        compute_latent_dataset(autoencoder, latent_file, sim_file, device=DEVICE, batch_size=args.batch_size)
+        del autoencoder
+    sim_file = latent_file
 
 train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN, warmup_seq_length=args.warmup_seq_length, 
                                           forecast_seq_length=args.forecast_seq_length, forecast_warmup=args.forecast_warmup)
@@ -146,7 +164,6 @@ OPTIMIZER = torch.optim.Adam
 # Building Model
 ########################
 print('Building model...')
-from experiments.utils.model_building import build_forecaster
 
 
 FLIPS, ROTS = args.flips, args.rots
@@ -187,15 +204,13 @@ model_hyperparameters = {
     'lstm_channels': lstm_channels,
     'parallel_ops': args.parallel_ops,
     'residual_connection': args.residual_connection,
-    'train_autoencoder': args.train_autoencoder
+    'train_autoencoder': args.train_autoencoder,
+    'include_autoencoder': args.loss_on_decoded
 }
-
-models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 
 model = build_forecaster(models_dir=models_dir, **model_hyperparameters)
 
 model.to(DEVICE)
-model.autoencoder.to(DEVICE)
 model.summary()
 
 ########################
@@ -216,7 +231,13 @@ loss_fn = torch.nn.MSELoss()
 trainable_parameters = model.parameters()
 optimizer = OPTIMIZER(trainable_parameters, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 # data augmentation only by 90° rotations for efficiency reasons
-data_augmentation = DataAugmentation(in_height=model.autoencoder.in_dims[-1], gspace=gspaces.flipRot2dOnR2(N=4))
+if args.loss_on_decoded:
+    data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4))
+else:
+    # TODO fix: will cause errors if model.gspace != gspace
+    model_gspace = model.gspace if isinstance(model, enn.EquivariantModule) else None
+    data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4), 
+                                         latent=True, latent_channels=model.input_channels, model_gspace=model_gspace)
 
 
 START_EPOCH = args.start_epoch # loads pretrained model if greater 0, loads last available epoch for -1
@@ -259,11 +280,7 @@ train_hyperparameters = {
 
 hyperparameters = model_hyperparameters | train_hyperparameters
 
-hyperparameters['latent_size'] = np.prod(model.autoencoder.latent_shape)/np.prod(model.autoencoder.out_shapes["Input"]) * 100
-total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-ae_params = sum(p.numel() for p in model.autoencoder.parameters() if p.requires_grad)
-hyperparameters['parameters'] = total_params-ae_params
-hyperparameters['parameters_w_ae'] = total_params
+hyperparameters['parameters'] = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 hp_file = os.path.join(train_dir, 'hyperparameters.json')
 if loaded_epoch > 0 and os.path.isfile(hp_file):
@@ -280,17 +297,14 @@ else:
 ########################
 # Training
 ########################
-if args.train_autoencoder:
-    for param in model.autoencoder.parameters():
-        param.requires_grad = True
-    # model.autoencoder.train()
-else:
-    # Freeze the autoencoder parameters so they are not updated during training.
-    for param in model.autoencoder.parameters():
-        param.requires_grad = False
-    model.autoencoder.eval() #! causes problems for steerable module since in eval parameter expansions are stored across runs -> Backpropagates multiple times over the same tensor
-    # Override train to do nothing
-    model.autoencoder.train = lambda self, mode=True: self  #! causes problems
+if args.loss_on_decoded:
+    if args.train_autoencoder:
+        for param in model.autoencoder.parameters():
+            param.requires_grad = True
+    else:
+        # Freeze the autoencoder parameters so they are not updated during training.
+        for param in model.autoencoder.parameters():
+            param.requires_grad = False
     
 
 training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 
