@@ -24,6 +24,7 @@ class RBDataset(IterableDataset):
         
         self.sim_file = sim_file
         self.dataset = dataset
+        
         self.device = device
         self.shuffle = shuffle
         self.slice_start = slice_start
@@ -74,19 +75,23 @@ class RBDataset(IterableDataset):
     
                 
     def standardize_batch(self, batch: Tensor) -> Tensor:
+        if self.mean is None or self.std is None:
+            raise Exception('Dataset does not contain standardization parameters')
+        
         assert len(batch.shape) == 5
         
-        h, c, w, d = self.snapshot_shape
-        assert tuple(batch.shape[-4:]) == (h, c, w, d)
+        assert tuple(batch.shape[-4:]) == self.snapshot_shape
         
         return (batch-self.mean) / self.std
     
     
     def de_standardize_batch(self, batch: Tensor) -> Tensor:
+        if self.mean is None or self.std is None:
+            raise Exception('Dataset does not contain standardization parameters')
+        
         assert len(batch.shape) == 5
         
-        h, c, w, d = self.snapshot_shape
-        assert tuple(batch.shape[-4:]) == (h, c, w, d)
+        assert tuple(batch.shape[-4:]) == self.snapshot_shape
         
         return batch * self.std + self.mean
                 
@@ -212,8 +217,11 @@ def num_samples_per_sim(sim_file: str, dataset: str) -> int:
 
 def standardization_params(sim_file: str) -> tuple[np.ndarray, np.ndarray]:
     with h5py.File(sim_file, 'r') as hf:
-        mean = np.array(hf['mean'])
-        std = np.array(hf['std'])
+        if 'mean' in hf.keys() and 'std' in hf.keys():
+            mean = np.array(hf['mean'])
+            std = np.array(hf['std'])
+        else:
+            mean, std = None, None
     return mean, std
 
 

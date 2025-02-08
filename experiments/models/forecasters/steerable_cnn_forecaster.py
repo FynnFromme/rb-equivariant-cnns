@@ -1,18 +1,18 @@
+import numpy as np
 import torch
 
 from escnn import nn as enn
-from escnn.nn import FieldType, GeometricTensor
+from escnn.nn import GeometricTensor
 from escnn.gspaces import GSpace
-from escnn.group import Representation
 
 from layers.conv.steerable_conv import RBSteerableConv
 from layers.lstm.steerable_conv_lstm import RBSteerableConvLSTM
 
 from experiments.models import model_utils
 from collections import OrderedDict
-from typing import Literal
+from typing import Literal, Any
+import itertools
 
-#! training does not work
 #! TODO LayerNorm?
 #! parameter initialization
 class RBSteerableForecaster(enn.EquivariantModule):
@@ -31,6 +31,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
         drop_rate: float = 0,
         recurrent_drop_rate: float = 0,
         parallel_ops: bool = True, # applies autoencoder and output layer in parallel (might result in out of memory for large sequences)
+        train_autoencoder: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -42,6 +43,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
         
         self.autoencoder = autoencoder
         self.parallel_ops = parallel_ops
+        self.train_autoencoder = train_autoencoder
         
         self.field_type = [gspace.regular_repr]
         self.lstm = RBSteerableConvLSTM(gspace=gspace,
@@ -68,8 +70,6 @@ class RBSteerableForecaster(enn.EquivariantModule):
                                            h_pad_mode='circular',
                                            bias=True)
         
-        self.bias = torch.nn.Parameter(torch.tensor(0.0)) #!
-        
         self.in_type, self.out_type = self.lstm.in_type, self.output_conv.out_type
         self.in_fields, self.out_fields = self.lstm.in_fields, self.output_conv.out_fields
         self.in_dims, self.out_dims = self.lstm.in_dims, self.output_conv.out_dims
@@ -78,27 +78,22 @@ class RBSteerableForecaster(enn.EquivariantModule):
     def forward(self, warmup_input, steps=1, output_whole_warmup=False):
         # input shape [batch, seq, width, depth, height, channels]
         
-        # return warmup_input + self.bias #! 
-        
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
 
         # encode into latent space
-        #TODO warmup_latent = self._encode(warmup_input)
+        warmup_latent = self._encode(warmup_input)
         
-        #! input b 1 48 48 32 4 -> latent b 1 6 6 4 32
-        warmup_latent = torch.repeat_interleave(warmup_input[:, :, :6, :6, :4, :], 8, 5) #!
+        if not self.train_autoencoder:
+            warmup_latent = warmup_latent.detach()
         
         output_latent = self.forward_latent(warmup_latent, steps, output_whole_warmup)
 
         # decode into original space
-        #TODO output = self._decode(output_latent)
-        
-        #! latent b 1 6 6 4 32 -> output b 1 48 48 32 4
-        output = output_latent[:, :, :, :, :, :4].repeat(1, 1, 8, 8, 8, 1) #!
+        output = self._decode(output_latent)
         
         return output
     
-    def forward_latent(self, warmup_input, steps=1, output_whole_warmup=False):
+    def forward_latent(self, warmup_input: torch.Tensor, steps=1, output_whole_warmup=False):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
@@ -109,10 +104,16 @@ class RBSteerableForecaster(enn.EquivariantModule):
         
         warmup_input = self._from_input_shape(warmup_input)
         warmup_length = warmup_input.shape[1]
-        #TODO warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
-        warmup_input = GeometricTensor(warmup_input[:, -1], self.lstm.in_type) #!
+        geom_warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
         
+        geom_outputs = self._forward_geometric_latent(self, geom_warmup_input, steps, output_whole_warmup)
+            
+        output = torch.stack([geom_tensor.tensor for geom_tensor in geom_outputs], dim=1)
         
+        output = self._to_output_shape(output)
+        return output
+    
+    def _forward_geometric_latent(self, warmup_input: list[GeometricTensor], steps=1, output_whole_warmup=False):
         lstm_autoregressor = self.lstm.autoregress(warmup_input, steps, output_whole_warmup)
         
         lstm_input = None # warmup_input is already provided to LSTM
@@ -121,29 +122,20 @@ class RBSteerableForecaster(enn.EquivariantModule):
             lstm_out = lstm_autoregressor.send(lstm_input)
             out = self._apply_output_layer(lstm_out)
             
-            #TODO if self.residual_connection:
-            #TODO     if i == 0:
-            #TODO         res_input = warmup_input if output_whole_warmup else [warmup_input[-1]]
-            #TODO     else:
-            #TODO         res_input = lstm_input
-            #TODO     out = [res + o for res, o in zip(res_input, out)]
+            if self.residual_connection:
+                if i == 0:
+                    res_input = warmup_input if output_whole_warmup else [warmup_input[-1]]
+                else:
+                    res_input = lstm_input
+                out = [res + o for res, o in zip(res_input, out)]
             
-            #TODO outputs.extend(out)
-            outputs.append(out) #!
-            #TODO lstm_input = [out[-1]]
-            lstm_input = out #!
+            outputs.extend(out)
+            lstm_input = [out[-1]]
             
-        #TODO output = torch.stack([geom_tensor.tensor for geom_tensor in outputs], dim=1)
-        output = out.tensor.unsqueeze(1) #!
-        
-        output = self._to_output_shape(output)
-        return output
+        return outputs
     
     def _apply_output_layer(self, lstm_out: list[GeometricTensor]):  
         # shape: (b,h*c,w,d,seq)
-        
-        hidden_state = lstm_out #!
-        return self.output_conv(hidden_state) #!
         
         seq_length = len(lstm_out)
         batch_size, _, w, d = lstm_out[0].shape
@@ -273,3 +265,69 @@ class RBSteerableForecaster(enn.EquivariantModule):
             
         """
         return input_shape
+    
+    def parameters(self):
+        trained_modules = [self.lstm, self.output_conv]
+        if self.train_autoencoder:
+            trained_modules.append(self.autoencoder)
+            
+        return itertools.chain(*[module.parameters() for module in trained_modules])
+    
+    def check_equivariance(self, atol: float = 1e-4, rtol: float = 1e-5, gpu_device=None) -> list[tuple[Any, float]]:
+        """Method that automatically tests the equivariance of the current module.
+        
+        Returns:
+            list: A list containing containing for each testing element a pair with that element and the 
+            corresponding equivariance error
+        """
+        
+        training = self.training
+        self.eval()
+        
+        batch_size = 2
+        warmup_length = 2
+        steps = 2
+
+        warmup_input = torch.randn(batch_size, 
+                                   warmup_length, 
+                                   *self.latent_dims,
+                                   sum(field.size for field in self.lstm.in_fields))
+        
+        if gpu_device is not None: 
+            warmup_input = warmup_input.to(gpu_device)
+        
+        warmup_input = self._from_input_shape(warmup_input)
+        warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
+        
+        errors = []
+        for el in self.in_type.testing_elements:
+            warmup_input_transformed = [x.transform(el) for x in warmup_input]
+            
+            out1 = self._forward_geometric_latent(warmup_input, steps=steps)
+            out2 = self._forward_geometric_latent(warmup_input_transformed, steps=steps)
+            
+            out1 = torch.stack([y.transform(el).tensor for y in out1], dim=1)
+            out2 = torch.stack([y.tensor for y in out2], dim=1)
+            
+            out1 = self._to_output_shape(out1)
+            out2 = self._to_output_shape(out2)
+            
+            if gpu_device is not None:
+                out1 = out1.cpu()
+                out2 = out2.cpu()
+            out1 = out1.detach().numpy()
+            out2 = out2.detach().numpy()
+        
+            errs = out1 - out2
+            errs = np.abs(errs).reshape(-1)
+            print(el, errs.max(), errs.mean(), errs.var())
+        
+            assert np.allclose(out1, out2, atol=atol, rtol=rtol), \
+                f'The error found during equivariance check with element "{el}" \
+                    is too high: max = {errs.max()}, mean = {errs.mean()} var ={errs.var()}'
+            
+            errors.append((el, errs.mean()))
+            
+        self.train(training)
+        
+        return errors

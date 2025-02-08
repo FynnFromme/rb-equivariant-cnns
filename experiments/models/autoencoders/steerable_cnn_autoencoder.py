@@ -13,7 +13,6 @@ from escnn.gspaces import GSpace
 
 from layers.conv.steerable_conv import RBSteerableConv, RBPooling, RBUpsampling
 
-
 class _SteerableConvBlock(enn.SequentialModule):
     def __init__(self, 
                  gspace: GSpace,

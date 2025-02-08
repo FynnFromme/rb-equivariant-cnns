@@ -13,6 +13,7 @@ from utils import training
 from escnn import gspaces
 
 from argparse import ArgumentParser, ArgumentTypeError
+import itertools
 
 ########################
 # Parsing arguments
@@ -37,7 +38,6 @@ parser.add_argument('ae_model_name', type=str)
 parser.add_argument('ae_train_name', type=str)
 parser.add_argument('epochs', type=int)
 parser.add_argument('-start_epoch', type=int, default=-1)
-parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
 parser.add_argument('-only_save_best', type=str2bool, default=True)
 parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
 
@@ -63,7 +63,7 @@ parser.add_argument('-residual_connection', type=str2bool, default=True)
 parser.add_argument('-warmup_seq_length', type=int, default=10)
 parser.add_argument('-forecast_seq_length', type=int, default=5)
 parser.add_argument('-forecast_warmup', action='store_true', default=False)
-parser.add_argument('-no_parallel_ops', dest='parallel_ops', action='store_false', default=True)
+parser.add_argument('-parallel_ops', action='store_true', default=False)
 
 parser.add_argument('-train_autoencoder', action='store_true', default=False)
 parser.add_argument('-lr', type=float, default=1e-3)
@@ -186,7 +186,8 @@ model_hyperparameters = {
     'rots': ROTS,
     'lstm_channels': lstm_channels,
     'parallel_ops': args.parallel_ops,
-    'residual_connection': args.residual_connection
+    'residual_connection': args.residual_connection,
+    'train_autoencoder': args.train_autoencoder
 }
 
 models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
@@ -194,6 +195,7 @@ models_dir = os.path.join(EXPERIMENT_DIR, 'trained_models')
 model = build_forecaster(models_dir=models_dir, **model_hyperparameters)
 
 model.to(DEVICE)
+model.autoencoder.to(DEVICE)
 model.summary()
 
 ########################
@@ -210,7 +212,9 @@ train_dir = os.path.join(models_dir, model_name, train_name)
 os.makedirs(train_dir, exist_ok=True)
 
 loss_fn = torch.nn.MSELoss()
-optimizer = OPTIMIZER(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+
+trainable_parameters = model.parameters()
+optimizer = OPTIMIZER(trainable_parameters, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 # data augmentation only by 90° rotations for efficiency reasons
 data_augmentation = DataAugmentation(in_height=model.autoencoder.in_dims[-1], gspace=gspaces.flipRot2dOnR2(N=4))
 
@@ -227,7 +231,7 @@ initial_early_stop_count, loaded_epoch = training.load_trained_model(model=model
 lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=LR_DECAY_PATIENCE, 
                                                           factor=LR_DECAY)
 
-EPOCHS = args.epochs - loaded_epoch if args.including_loaded_epochs else args.epochs
+EPOCHS = args.epochs - loaded_epoch
 
 
 ########################
@@ -250,8 +254,7 @@ train_hyperparameters = {
     'train_loss_in_eval': args.train_loss_in_eval,
     'warmup_seq_length': args.warmup_seq_length,
     'forecast_seq_length': args.forecast_seq_length,
-    'forecast_warmup': args.forecast_warmup,
-    'train_autoencoder': args.train_autoencoder
+    'forecast_warmup': args.forecast_warmup
 }
 
 hyperparameters = model_hyperparameters | train_hyperparameters
@@ -280,14 +283,14 @@ else:
 if args.train_autoencoder:
     for param in model.autoencoder.parameters():
         param.requires_grad = True
-    model.autoencoder.train()
+    # model.autoencoder.train()
 else:
     # Freeze the autoencoder parameters so they are not updated during training.
     for param in model.autoencoder.parameters():
         param.requires_grad = False
-    model.autoencoder.eval()
+    model.autoencoder.eval() #! causes problems for steerable module since in eval parameter expansions are stored across runs -> Backpropagates multiple times over the same tensor
     # Override train to do nothing
-    model.autoencoder.train = lambda self, mode=True: self
+    model.autoencoder.train = lambda self, mode=True: self  #! causes problems
     
 
 training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 

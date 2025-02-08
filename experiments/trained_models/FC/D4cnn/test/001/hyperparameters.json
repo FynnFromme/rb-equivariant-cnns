@@ -11,12 +11,13 @@
     "flips": true,
     "rots": 4,
     "lstm_channels": [
-        10,
-        10
+        8,
+        8
     ],
     "parallel_ops": false,
     "residual_connection": true,
-    "batch_size": 2,
+    "train_autoencoder": false,
+    "batch_size": 48,
     "n_train": 24060,
     "n_valid": 8020,
     "learning_rate": 0.001,
@@ -32,8 +33,7 @@
     "warmup_seq_length": 10,
     "forecast_seq_length": 5,
     "forecast_warmup": false,
-    "train_autoencoder": false,
     "latent_size": 1.5625,
-    "parameters": 3520336,
-    "parameters_w_ae": 10692920
+    "parameters": -4863192,
+    "parameters_w_ae": 2309392
 }

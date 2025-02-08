@@ -35,7 +35,6 @@ parser.add_argument('model', type=str, choices=['3DCNN', 'CNN', 'steerable3DCNN'
 parser.add_argument('train_name', type=str)
 parser.add_argument('epochs', type=int)
 parser.add_argument('-start_epoch', type=int, default=-1)
-parser.add_argument('-including_loaded_epochs', action='store_true', default=False)
 parser.add_argument('-only_save_best', type=str2bool, default=True)
 parser.add_argument('-train_loss_in_eval', action='store_true', default=False)
 
@@ -218,7 +217,7 @@ initial_early_stop_count, loaded_epoch = training.load_trained_model(model=model
 lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=LR_DECAY_PATIENCE, 
                                                           factor=LR_DECAY)
 
-EPOCHS = args.epochs - loaded_epoch if args.including_loaded_epochs else args.epochs
+EPOCHS = args.epochs - loaded_epoch
 
 
 ########################
