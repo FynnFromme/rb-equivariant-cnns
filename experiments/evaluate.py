@@ -29,9 +29,6 @@ parser = ArgumentParser()
 parser.add_argument('model_name', type=str)
 parser.add_argument('train_name', type=str)
 
-parser.add_argument('-ae_model_name', type=str)
-parser.add_argument('-ae_train_name', type=str)
-
 parser.add_argument('-loss_on_latent', action='store_true', default=False)
 parser.add_argument('-warmup_seq_length', type=int, default=10)
 parser.add_argument('-forecast_seq_length', type=int, default=3)
@@ -47,6 +44,7 @@ parser.add_argument('-check_equivariance', action='store_true', default=False)
 parser.add_argument('-animate', action='store_true', default=False)
 parser.add_argument('-compute_latent_sensitivity', action='store_true', default=False)
 
+parser.add_argument('-autoregressive_confidence_interval', type=float, default=0.95)
 parser.add_argument('-animation_samples', type=int, default=np.inf)
 parser.add_argument('-latent_sensitivity_samples', type=int, default=-1)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
@@ -110,11 +108,16 @@ if args.model_name.startswith('AE'):
     train_dataset = dataset.RBDataset(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN)
 elif args.model_name.startswith('FC'):
     if args.loss_on_latent:
-        latent_file = os.path.join(EXPERIMENT_DIR, 'latent_datasets', args.ae_model_name, 
-                                   args.ae_train_name, f'{args.simulation_name}.h5')
+        hp_file = os.path.join(models_dir, args.model_name, args.train_name, 'hyperparameters.json')
+        with open(hp_file, 'r') as f:
+            hps = json.load(f)
+            ae_model_name = hps['ae_model_name']
+            ae_train_name = hps['ae_train_name']
+        latent_file = os.path.join(EXPERIMENT_DIR, 'latent_datasets', ae_model_name, 
+                                   ae_train_name, f'{args.simulation_name}.h5')
         if not os.path.isfile(latent_file):
             print('Loading autoencoder to precompute latent dataset')
-            autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', args.ae_model_name), args.ae_train_name)
+            autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
             autoencoder.to(DEVICE)
             print('Precompute latent dataset')
             compute_latent_dataset(autoencoder, latent_file, sim_file, device=DEVICE, batch_size=args.batch_size)
@@ -126,9 +129,9 @@ elif args.model_name.startswith('FC'):
     train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN, 
                                               warmup_seq_length=args.warmup_seq_length, forecast_seq_length=args.forecast_seq_length)
     
-    autoregressive_test_dataset = dataset.RBForecastDataset(sim_file, 'test', device=DEVICE, shuffle=False, samples=N_TEST, 
+    autoregressive_test_dataset = dataset.RBForecastDataset(sim_file, 'test', device=DEVICE, shuffle=True, samples=N_TEST, 
                                              warmup_seq_length=args.autoregressive_warmup_seq_length, forecast_seq_length=args.autoregressive_forecast_seq_length)
-    autoregressive_train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=False, samples=N_TRAIN, 
+    autoregressive_train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN, 
                                               warmup_seq_length=args.autoregressive_warmup_seq_length, forecast_seq_length=args.autoregressive_forecast_seq_length)
     autoregressive_test_loader = DataLoader(autoregressive_test_dataset, batch_size=args.batch_size)
     autoregressive_train_loader = DataLoader(autoregressive_train_dataset, batch_size=args.batch_size)
@@ -218,27 +221,37 @@ if args.eval_autoregressive_performance:
         performance = load_json(performance_file)
 
         # update new performance metrics but keep other contents
-        performance['mse'], performance['mae'] = compute_autoregressive_loss(model, args.autoregressive_forecast_seq_length, 
-                                                                             autoregressive_test_loader,
-                                                                             [torch.nn.MSELoss(), torch.nn.L1Loss()], 
-                                                                             autoregressive_test_dataset.num_sampels, args.batch_size, 
-                                                                             autoregressive_model_forward_kwargs)
+        avgs, medians, lower_bounds, upper_bounds = compute_autoregressive_loss(model, 
+                                                                                args.autoregressive_forecast_seq_length, 
+                                                                                autoregressive_test_loader,
+                                                                                [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                                                autoregressive_test_dataset.num_sampels, args.batch_size, 
+                                                                                autoregressive_model_forward_kwargs,
+                                                                                args.autoregressive_confidence_interval)
+        performance['mse'], performance['mae'] = avgs
+        performance['mse_median'], performance['mae_median'] = medians
+        performance['mse_lower'], performance['mae_lower'] = lower_bounds
+        performance['mse_upper'], performance['mae_upper'] = upper_bounds
         performance['rmse'] = list(np.sqrt(performance['mse']))
+        performance['rmse_median'] = list(np.sqrt(performance['mse_median']))
+        performance['rmse_lower'] = list(np.sqrt(performance['mse_lower']))
+        performance['rmse_upper'] = list(np.sqrt(performance['mse_upper']))
 
-        performance['mse_train'], performance['mae_train'] = compute_autoregressive_loss(model, args.autoregressive_forecast_seq_length, 
-                                                                                         autoregressive_train_loader,
-                                                                                         [torch.nn.MSELoss(), torch.nn.L1Loss()], 
-                                                                                         autoregressive_train_dataset.num_sampels, args.batch_size, 
-                                                                                         autoregressive_model_forward_kwargs)
+        avgs, medians, lower_bounds, upper_bounds = compute_autoregressive_loss(model, 
+                                                                                args.autoregressive_forecast_seq_length, 
+                                                                                autoregressive_train_loader,
+                                                                                [torch.nn.MSELoss(), torch.nn.L1Loss()], 
+                                                                                autoregressive_train_dataset.num_sampels, args.batch_size, 
+                                                                                autoregressive_model_forward_kwargs,
+                                                                                args.autoregressive_confidence_interval)
+        performance['mse_train'], performance['mae_train'] = avgs
+        performance['mse_train_median'], performance['mae_train_median'] = medians
+        performance['mse_train_lower'], performance['mae_train_lower'] = lower_bounds
+        performance['mse_train_upper'], performance['mae_train_upper'] = upper_bounds
         performance['rmse_train'] = list(np.sqrt(performance['mse_train']))
-
-        print(f'MSE={performance["mse"]}')
-        print(f'RMSE={performance["rmse"]}')
-        print(f'MAE={performance["mae"]}')
-
-        print(f'MSE_train={performance["mse_train"]}')
-        print(f'RMSE_train={performance["rmse_train"]}')
-        print(f'MAE_train={performance["mae_train"]}')
+        performance['rmse_train_median'] = list(np.sqrt(performance['mse_train_median']))
+        performance['rmse_train_lower'] = list(np.sqrt(performance['mse_train_lower']))
+        performance['rmse_train_upper'] = list(np.sqrt(performance['mse_train_upper']))
 
         # update performances in file
         save_json(performance, performance_file)
@@ -299,15 +312,7 @@ if args.eval_performance_per_channel:
                                                                                                   -1, train_dataset.num_sampels, args.batch_size, 
                                                                                                   model_forward_kwargs)
     channel_performance['rmse_train'] = list(np.sqrt(channel_performance['mse_train']))
-
-    print(f'MSE={channel_performance["mse"]}')
-    print(f'RMSE={channel_performance["rmse"]}')
-    print(f'MAE={channel_performance["mae"]}')
     
-    print(f'MSE_train={channel_performance["mse_train"]}')
-    print(f'RMSE_train={channel_performance["rmse_train"]}')
-    print(f'MAE_train={channel_performance["mae_train"]}')
-    print(channel_performance, type(channel_performance))
     # update performances in file
     save_json(channel_performance, channel_performance_file)
 

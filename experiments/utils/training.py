@@ -182,12 +182,14 @@ def train_loop(train_loader: DataLoader,
 def compute_loss(dataloader: DataLoader, model: torch.nn.Module, loss_fn, model_forward_kwargs: dict = {}):
     model.eval()
     valid_loss = 0.0
+    n = 0
     with torch.no_grad(): # Ensures that no gradients are computed during test mode
         for i, (x, y) in enumerate(dataloader, 1):
             pred = model(x, **model_forward_kwargs)
-            valid_loss += loss_fn(pred, y).item()
-
-    return valid_loss / i
+            batch_size = x.size(0)
+            valid_loss += loss_fn(pred, y).item()*batch_size
+            n += batch_size
+    return valid_loss / n
 
 
 def save_checkpoint(path, weights, optimizer_state, early_stop_count):

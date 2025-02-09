@@ -413,11 +413,13 @@ def plot_performance_per_hp(trains_dir: str, results_dir: str, model_names: str 
     plt.grid(axis='y')
 
 
-def plot_autoregressive_performance(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+def plot_autoregressive_performance(results_dir: str, model_names: str | list, train_names: str | list, metric: str,
+                                    show_train: bool = False, show_bounds: bool = True, median: bool = True):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
     fig = plt.figure(figsize=(8, 5))
+    fig, ax = plt.subplots()
     
     for model_name, train_name in zip(model_names, train_names):
         results_file = os.path.join(results_dir, model_name, train_name, 'autoregressive_performance.json')
@@ -425,8 +427,20 @@ def plot_autoregressive_performance(results_dir: str, model_names: str | list, t
             results = json.load(f)
             
         x = range(1, len(results[metric])+1)
-        plt.plot(x, results[metric], label=f'{model_name}/{train_name} - test')
-        plt.plot(x, results[f'{metric}_train'], label=f'{model_name}/{train_name} - train')
+        
+        median_suffix = '_median' if median else ''
+        test_line, = plt.plot(x, results[metric+median_suffix], label=f'{model_name}/{train_name} - test')
+        if show_bounds:
+            ax.fill_between(x, results[f'{metric}_lower'], results[f'{metric}_upper'], 
+                            color=test_line.get_color(), alpha=0.2)
+            
+        if show_train:
+            train_line, = plt.plot(x, results[f'{metric}_train'+median_suffix], label=f'{model_name}/{train_name} - train')
+            if show_bounds:
+                ax.fill_between(x, results[f'{metric}_train_lower'], results[f'{metric}_train_upper'], 
+                                color=train_line.get_color(), alpha=0.2)
+        
+        
     
     plt.ylabel(metric.upper())
     plt.xlabel('autoregressive steps')

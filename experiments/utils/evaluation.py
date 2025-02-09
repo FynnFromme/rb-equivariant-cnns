@@ -32,12 +32,15 @@ def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns,
     predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
     
     running_losses = [0]*len(loss_fns)
+    n = 0
     for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
         for loss_nr, loss_fn in enumerate(loss_fns):
-            loss = loss_fn(outputs, predictions).item()
+            batch_size = outputs.size(0)
+            loss = loss_fn(outputs, predictions).item()*batch_size
             running_losses[loss_nr] += loss
+            n += batch_size
     
-    avg_losses = [running_loss / batch_nr for running_loss in running_losses]
+    avg_losses = [running_loss / n for running_loss in running_losses]
 
     return avg_losses if multiple_losses else avg_losses[0]
 
@@ -55,7 +58,10 @@ def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, lo
     running_losses = None
     ax_indices = None
     ax_sizes = None
+    n = 0
     for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        batch_size = outputs.size(0)
+        n += batch_size
         if ax_sizes is None:
             ax_sizes = [outputs.shape[ax] for ax in axes]
             running_losses = torch.zeros((len(loss_fns), *ax_sizes))
@@ -67,41 +73,60 @@ def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, lo
                     index_tuple[d] = i  # Replace with specific indices
                     
                 loss = loss_fn(outputs[tuple(index_tuple)], 
-                               predictions[tuple(index_tuple)]).item()
+                               predictions[tuple(index_tuple)]).item() * batch_size
                 running_losses[(loss_nr, *ax_index)] += loss
     
-    avg_losses = running_losses / batch_nr
+    avg_losses = running_losses / n
 
     avg_losses = avg_losses.tolist()
     return avg_losses if multiple_losses else avg_losses[0]
 
 
 def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int, test_loader: DataLoader, loss_fns, 
-                                samples: int = None, batch_size: int = None,
-                                model_forward_kwargs: dict = {}):
+                                samples: int = None, batch_size: int = None, model_forward_kwargs: dict = {},
+                                confidence_interval: float = 0.95):
     
     
     multiple_losses = isinstance(loss_fns, Iterable)
     if not multiple_losses: loss_fns = [loss_fns]
+    
+    # store old loss reductions since we need to modify them here
+    old_loss_reductions = [loss_fn.reduction for loss_fn in loss_fns]
+    old_parallel_ops = model.parallel_ops
         
     predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
     
-    old_parallel_ops = model.parallel_ops
     model.parallel_ops = False # compute sequence output sequentially due to memory constraint
     
-    running_losses = torch.zeros(len(loss_fns), forecast_seq_length)
+    losses = torch.zeros(len(loss_fns), samples, forecast_seq_length)
+    n = 0
     for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        batch_size = outputs.size(0)
         for loss_nr, loss_fn in enumerate(loss_fns):
+            loss_fn.reduction = 'none'
             for t in range(forecast_seq_length):
-                loss = loss_fn(outputs[:, t], predictions[:, t]).item()
-                running_losses[loss_nr, t] += loss
+                loss = loss_fn(outputs[:, t], predictions[:, t]).mean(dim=(1,2,3,4))
+                losses[loss_nr, n:n+batch_size, t] = loss
+        n += batch_size
     
     model.parallel_ops = old_parallel_ops
+    for loss_fn, reduction in zip(loss_fns, old_loss_reductions):
+        loss_fn.reduction = reduction
+        
+    avg_losses = losses.mean(dim=1)
+    median_losses = torch.quantile(losses, 0.05, dim=1)
+    lower_bounds = torch.quantile(losses, (1-confidence_interval)/2, dim=1)
+    upper_bounds = torch.quantile(losses, 1-(1-confidence_interval)/2, dim=1)
     
-    avg_losses = running_losses / batch_nr
     avg_losses = avg_losses.tolist()
+    median_losses = median_losses.tolist()
+    lower_bounds = lower_bounds.tolist()
+    upper_bounds = upper_bounds.tolist()
     
-    return avg_losses if multiple_losses else avg_losses[0]
+    return (avg_losses if multiple_losses else avg_losses[0],
+            median_losses if multiple_losses else median_losses[0],
+            lower_bounds if multiple_losses else lower_bounds[0],
+            upper_bounds if multiple_losses else upper_bounds[0],)
 
 
 

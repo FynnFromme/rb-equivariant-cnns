@@ -3,8 +3,8 @@
     "ae_model_name": "D4cnn",
     "ae_train_name": "hp_search/016_3layer_lc32",
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
-    "h_kernel_size": 5,
-    "v_kernel_size": 5,
+    "h_kernel_size": 3,
+    "v_kernel_size": 3,
     "drop_rate": 0.2,
     "recurrent_drop_rate": 0,
     "nonlinearity": "tanh",
@@ -17,7 +17,8 @@
     "parallel_ops": false,
     "residual_connection": true,
     "train_autoencoder": false,
-    "batch_size": 48,
+    "include_autoencoder": false,
+    "batch_size": 64,
     "n_train": 24060,
     "n_valid": 8020,
     "learning_rate": 0.001,
@@ -33,7 +34,5 @@
     "warmup_seq_length": 10,
     "forecast_seq_length": 5,
     "forecast_warmup": false,
-    "latent_size": 1.5625,
-    "parameters": -4863192,
-    "parameters_w_ae": 2309392
+    "parameters": 755984
 }
