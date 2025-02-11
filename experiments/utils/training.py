@@ -148,6 +148,7 @@ def train_loop(train_loader: DataLoader,
     model.train()
     running_loss = 0.0
     
+    n = 0
     with tqdm(total=math.ceil(samples/batch_size), desc=f'epoch {epochnum}', unit='batch', dynamic_ncols=True) as pbar:
         for i, (x, y) in enumerate(train_loader, 1):
             optimizer.zero_grad() # Resets gradient
@@ -159,19 +160,21 @@ def train_loop(train_loader: DataLoader,
             pred = model(x, **model_forward_kwargs)
 
             loss = loss_fn(pred, y)
-            running_loss += loss.item()
+            cur_batch_size = x.size(0)
+            running_loss += loss.item()*cur_batch_size
         
             # Backpropagation
             loss.backward() # Backpropagates the prediction loss
             optimizer.step() # Adjusts the parameters by the gradients collected in the backward pass
             
-            pbar.set_postfix_str(f'train_loss={running_loss/i:.5f}')
+            n += cur_batch_size
+            pbar.set_postfix_str(f'train_loss={running_loss/n:.5f}')
             pbar.update(1)
             
         if train_loss_in_eval:
             train_loss = compute_loss(train_loader, model, loss_fn, model_forward_kwargs)
         else:
-            train_loss = running_loss / i
+            train_loss = running_loss / n
         valid_loss = compute_loss(valid_loader, model, loss_fn, model_forward_kwargs)
         
         pbar.set_postfix_str(f'{train_loss=:.5f}, {valid_loss=:.5f}')

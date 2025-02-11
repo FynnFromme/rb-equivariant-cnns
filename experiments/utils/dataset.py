@@ -135,7 +135,8 @@ class RBForecastDataset(RBDataset):
         self.forecast_warmup = forecast_warmup
         
         # during forecasting the number of samples differs since there is no forecasting across simulation boundaries
-        self.num_sampels = len(self.compute_forecasting_indices(start=0, end=slice_start+self.num_samples))
+        self.num_samples = len(self.compute_forecasting_indices())
+        self.num_samples = min(self.num_samples, samples) if samples > 0 else self.num_samples
 
 
     def generator(self, start: int = 0, end: int = -1):
@@ -165,24 +166,18 @@ class RBForecastDataset(RBDataset):
                 yield x, y
                 
     
-    def compute_forecasting_indices(self, start: int, end: int):
+    def compute_forecasting_indices(self, start: int = None, end: int = None):
         # make sure that there are no forecasting samples across simulation boundaries
         sim_start_indices = range(0, self.snaps_in_dataset, self.snaps_per_sim)
         sim_end_indices = range(self.snaps_per_sim, self.snaps_in_dataset+1, self.snaps_per_sim)
         
         indices = []
         for sim_start, sim_end in zip(sim_start_indices, sim_end_indices):
-            if sim_end <= start:
-                continue # whole simulation is in front of selected range
-            if sim_start >= end:
-                break # whole simulation (and following ones) are after selected range
-            sim_end = min(sim_end, end)
-            sim_start = max(sim_start, start)
             
             sim_indices = list(range(sim_start+self.warmup_seq_length, sim_end-self.forecast_seq_length+1))
             indices.extend(sim_indices)
             
-        return indices
+        return indices[start:end]
     
     
     def iterate_simulations(self) -> Generator['RBForecastDataset', None, None]:

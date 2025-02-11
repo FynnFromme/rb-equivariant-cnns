@@ -34,12 +34,12 @@ def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns,
     running_losses = [0]*len(loss_fns)
     n = 0
     for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+        n += batch_size
         for loss_nr, loss_fn in enumerate(loss_fns):
             batch_size = outputs.size(0)
             loss = loss_fn(outputs, predictions).item()*batch_size
             running_losses[loss_nr] += loss
-            n += batch_size
-    
+
     avg_losses = [running_loss / n for running_loss in running_losses]
 
     return avg_losses if multiple_losses else avg_losses[0]
@@ -104,9 +104,8 @@ def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int
         batch_size = outputs.size(0)
         for loss_nr, loss_fn in enumerate(loss_fns):
             loss_fn.reduction = 'none'
-            for t in range(forecast_seq_length):
-                loss = loss_fn(outputs[:, t], predictions[:, t]).mean(dim=(1,2,3,4))
-                losses[loss_nr, n:n+batch_size, t] = loss
+            loss = loss_fn(outputs, predictions).mean(dim=(2,3,4,5)) # shape (batch_size, seq_length)
+            losses[loss_nr, n:n+batch_size, :] = loss
         n += batch_size
     
     model.parallel_ops = old_parallel_ops
@@ -114,7 +113,7 @@ def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int
         loss_fn.reduction = reduction
         
     avg_losses = losses.mean(dim=1)
-    median_losses = torch.quantile(losses, 0.05, dim=1)
+    median_losses = torch.quantile(losses, 0.5, dim=1)
     lower_bounds = torch.quantile(losses, (1-confidence_interval)/2, dim=1)
     upper_bounds = torch.quantile(losses, 1-(1-confidence_interval)/2, dim=1)
     
