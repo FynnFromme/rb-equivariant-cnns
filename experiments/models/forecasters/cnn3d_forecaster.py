@@ -14,11 +14,12 @@ class RB3DForecaster(Module):
         self,
         autoencoder: torch.nn.Module,
         num_layers: int,
-        input_channels: int,
+        latent_channels: int,
         hidden_channels: list[int],
         latent_dims: tuple[int],
         v_kernel_size: int,
         h_kernel_size: int,
+        use_lstm_encoder: bool = True,
         residual_connection: bool = True,
         nonlinearity = torch.tanh,
         drop_rate: float = 0,
@@ -29,7 +30,9 @@ class RB3DForecaster(Module):
     ):
         super().__init__()
         
-        self.input_channels = input_channels
+        self.use_lstm_encoder = use_lstm_encoder
+        
+        self.latent_channels = latent_channels
         self.hidden_channels = hidden_channels
         self.latent_dims = latent_dims
         self.residual_connection = residual_connection
@@ -38,29 +41,54 @@ class RB3DForecaster(Module):
         self.train_autoencoder = train_autoencoder
         self.parallel_ops = parallel_ops
         
-        self.lstm = RB3DConvLSTM(num_layers=num_layers, 
-                                 input_channels=input_channels, 
-                                 hidden_channels=hidden_channels,
-                                 dims=latent_dims, 
-                                 v_kernel_size=v_kernel_size, 
-                                 h_kernel_size=h_kernel_size, 
-                                 nonlinearity=nonlinearity,
-                                 drop_rate=drop_rate,
-                                 recurrent_drop_rate=recurrent_drop_rate,
-                                 bias=True)
+        if use_lstm_encoder:
+            self.lstm_encoder = RB3DConvLSTM(num_layers=num_layers, 
+                                            input_channels=latent_channels, 
+                                            hidden_channels=hidden_channels,
+                                            dims=latent_dims, 
+                                            v_kernel_size=v_kernel_size, 
+                                            h_kernel_size=h_kernel_size, 
+                                            nonlinearity=nonlinearity,
+                                            drop_rate=drop_rate,
+                                            recurrent_drop_rate=recurrent_drop_rate,
+                                            bias=True)
+        else:
+            self.lstm_encoder = None
+        
+        self.lstm_decoder = RB3DConvLSTM(num_layers=num_layers, 
+                                         input_channels=latent_channels, 
+                                         hidden_channels=hidden_channels,
+                                         dims=latent_dims, 
+                                         v_kernel_size=v_kernel_size, 
+                                         h_kernel_size=h_kernel_size, 
+                                         nonlinearity=nonlinearity,
+                                         drop_rate=drop_rate,
+                                         recurrent_drop_rate=recurrent_drop_rate,
+                                         bias=True)
         
         self.dropout = torch.nn.Dropout(drop_rate)
         
         self.output_conv = RB3DConv(in_channels=hidden_channels[-1],
-                                     out_channels=input_channels,
-                                     in_dims=latent_dims,
-                                     v_kernel_size=v_kernel_size,
-                                     h_kernel_size=h_kernel_size,
-                                     v_pad_mode='zeros',
-                                     h_pad_mode='circular',
-                                     bias=True)
+                                    out_channels=latent_channels,
+                                    in_dims=latent_dims,
+                                    v_kernel_size=v_kernel_size,
+                                    h_kernel_size=h_kernel_size,
+                                    v_pad_mode='zeros',
+                                    h_pad_mode='circular',
+                                    bias=True)
         
-    def forward(self, warmup_input, steps=1, output_whole_warmup=False):
+        first_lstm = self.lstm_encoder if use_lstm_encoder else self.lstm_decoder
+        if autoencoder is not None:
+            self.in_dims, self.out_dims = self.autoencoder.in_dims, self.autoencoder.out_dims
+            self.in_height, self.out_height = self.autoencoder.in_dims[-1], self.autoencoder.out_dims[-1]
+        else:
+            self.in_dims, self.out_dims = first_lstm.in_dims, self.output_conv.out_dims
+            self.in_height, self.out_height = first_lstm.in_height, self.output_conv.out_height
+        self.in_latent_dims, self.out_latent_dims = first_lstm.in_dims, self.output_conv.out_dims
+        self.in_latent_height, self.out_latent_height = first_lstm.in_height, self.output_conv.out_height
+        
+        
+    def forward(self, warmup_input, steps=1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
@@ -70,37 +98,42 @@ class RB3DForecaster(Module):
         
         # encode into latent space
         if self.autoencoder is not None:
-            warmup_latent = self._encode(warmup_input)
+            warmup_latent = self._encode_to_latent(warmup_input)
         
             if not self.train_autoencoder:
                 warmup_latent = warmup_latent.detach()
         else:
             warmup_latent = warmup_input
             
-        output_latent = self.forward_latent(warmup_latent, steps, output_whole_warmup)
+        output_latent = self.forward_latent(warmup_latent, steps)
         
         # decode into original space
         if self.autoencoder is not None:
-            output = self._decode(output_latent)
+            output = self._decode_from_latent(output_latent)
         else:
             output = output_latent
         
         return output
     
-    def forward_latent(self, warmup_input, steps=1, output_whole_warmup=False):
+    def forward_latent(self, warmup_input, steps=1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
-        # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
-        # len(warmup_input) predictions wuring warmup rather than just the last one
         warmup_input = self._from_input_shape(warmup_input)
         
         input_channels, *dims = warmup_input.shape[2:]
-        assert input_channels == self.input_channels
+        assert input_channels == self.latent_channels
         assert tuple(dims) == tuple(self.latent_dims)
         
-        lstm_autoregressor = self.lstm.autoregress(warmup_input, steps, output_whole_warmup)
+        if self.use_lstm_encoder:
+            _, encoded_state = self.lstm_encoder.forward(warmup_input)
+            decoder_input = warmup_input[:, [-1]]
+        else:
+            encoded_state = None
+            decoder_input = warmup_input
         
-        lstm_input = None # warmup_input is already provided to LSTM
+        lstm_autoregressor = self.lstm_decoder.autoregress(decoder_input, steps, encoded_state)
+        
+        lstm_input = None # decoder_input is already provided to LSTM
         outputs = []
         for i in range(steps):
             lstm_out = lstm_autoregressor.send(lstm_input)
@@ -108,7 +141,7 @@ class RB3DForecaster(Module):
             
             if self.residual_connection:
                 if i == 0:
-                    res_input = warmup_input if output_whole_warmup else warmup_input[:, [-1]]
+                    res_input = warmup_input[:, [-1]]
                 else:
                     res_input = lstm_input
                 out = res_input + out
@@ -142,7 +175,7 @@ class RB3DForecaster(Module):
                    
         return output
     
-    def _encode(self, input):
+    def _encode_to_latent(self, input):
         batch_size, seq_length = input.shape[:2]
         
         if self.parallel_ops:
@@ -158,7 +191,7 @@ class RB3DForecaster(Module):
         
         return latent
     
-    def _decode(self, latent):
+    def _decode_from_latent(self, latent):
         batch_size, seq_length = latent.shape[:2]
         
         if self.parallel_ops:
@@ -203,11 +236,17 @@ class RB3DForecaster(Module):
         # LSTM   
         out_shapes = []
         layer_params = []
-        for i, cell in enumerate(self.lstm.cells, 1):
-            out_shapes.append((f'LSTM{i}', [cell.hidden_channels, *cell.dims]))
-            layer_params.append((f'LSTM{i}', model_utils.count_trainable_params(cell)))
+        
+        if self.use_lstm_encoder:
+            for i, cell in enumerate(self.lstm_encoder.cells, 1):
+                out_shapes.append((f'EncoderLSTM{i}', [cell.hidden_channels, *cell.dims]))
+                layer_params.append((f'EncoderLSTM{i}', model_utils.count_trainable_params(cell)))
             
-        out_shapes.append(('LSTM-Head', [self.input_channels, *self.latent_dims]))
+        for i, cell in enumerate(self.lstm_decoder.cells, 1):
+            out_shapes.append((f'DecoderLSTM{i}', [cell.hidden_channels, *cell.dims]))
+            layer_params.append((f'DecoderLSTM{i}', model_utils.count_trainable_params(cell)))
+            
+        out_shapes.append(('LSTM-Head', [self.latent_channels, *self.latent_dims]))
         layer_params.append((f'LSTM-Head', model_utils.count_trainable_params(self.output_conv)))
         latent_shape = out_shapes[-1][1]
         

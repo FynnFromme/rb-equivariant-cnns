@@ -60,11 +60,11 @@ parser.add_argument('-nonlinearity', type=str, default='tanh', choices=['tanh', 
 parser.add_argument('-lstm_channels', nargs='+', type=int, default=None)
 parser.add_argument('-weight_decay', type=float, default=0)
 parser.add_argument('-residual_connection', type=str2bool, default=True)
+parser.add_argument('-use_lstm_encoder', type=str2bool, default=True)
 
 # training hyperparameters
 parser.add_argument('-warmup_seq_length', type=int, default=10)
 parser.add_argument('-forecast_seq_length', type=int, default=5)
-parser.add_argument('-forecast_warmup', action='store_true', default=False)
 parser.add_argument('-parallel_ops', action='store_true', default=False)
 parser.add_argument('-loss_on_decoded', action='store_true', default=False)
 
@@ -110,11 +110,6 @@ SIMULATION_NAME = args.simulation_name
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{SIMULATION_NAME}.h5')
 
-N_train_avail, N_valid_avail, N_test_avail = dataset.num_samples(sim_file, ['train', 'valid', 'test'])
-
-# Reduce the amount of data manually
-N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
-N_VALID = min(args.n_valid, N_valid_avail) if args.n_valid > 0 else N_valid_avail
 
 if not args.loss_on_decoded:
     latent_file = os.path.join(EXPERIMENT_DIR, 'latent_datasets', args.ae_model_name, 
@@ -128,16 +123,13 @@ if not args.loss_on_decoded:
         del autoencoder
     sim_file = latent_file
 
-train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN, warmup_seq_length=args.warmup_seq_length, 
-                                          forecast_seq_length=args.forecast_seq_length, forecast_warmup=args.forecast_warmup)
-valid_dataset = dataset.RBForecastDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID, warmup_seq_length=args.warmup_seq_length, 
-                                          forecast_seq_length=args.forecast_seq_length, forecast_warmup=args.forecast_warmup)
+train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=args.n_train, warmup_seq_length=args.warmup_seq_length, 
+                                          forecast_seq_length=args.forecast_seq_length)
+valid_dataset = dataset.RBForecastDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=args.n_valid, warmup_seq_length=args.warmup_seq_length, 
+                                          forecast_seq_length=args.forecast_seq_length)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
 valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
-
-print(f'Using {N_TRAIN}/{N_train_avail} training samples')
-print(f'Using {N_VALID}/{N_valid_avail} validation samples')
 
 
 
@@ -205,7 +197,8 @@ model_hyperparameters = {
     'parallel_ops': args.parallel_ops,
     'residual_connection': args.residual_connection,
     'train_autoencoder': args.train_autoencoder,
-    'include_autoencoder': args.loss_on_decoded
+    'include_autoencoder': args.loss_on_decoded,
+    'use_lstm_encoder': args.use_lstm_encoder
 }
 
 model = build_forecaster(models_dir=models_dir, **model_hyperparameters)
@@ -237,7 +230,7 @@ else:
     # TODO fix: will cause errors if model.gspace != gspace
     model_gspace = model.gspace if isinstance(model, enn.EquivariantModule) else None
     data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4), 
-                                         latent=True, latent_channels=model.input_channels, model_gspace=model_gspace)
+                                         latent=True, latent_channels=model.latent_channels, model_gspace=model_gspace)
 
 
 START_EPOCH = args.start_epoch # loads pretrained model if greater 0, loads last available epoch for -1
@@ -261,8 +254,8 @@ EPOCHS = args.epochs - loaded_epoch
 
 train_hyperparameters = {
     'batch_size': BATCH_SIZE,
-    'n_train': N_TRAIN,
-    'n_valid': N_VALID,
+    'n_train': train_dataset.num_samples,
+    'n_valid': valid_dataset.num_samples,
     'learning_rate': LEARNING_RATE,
     'optimizer': str(OPTIMIZER),
     'lr_decay': LR_DECAY,
@@ -275,7 +268,6 @@ train_hyperparameters = {
     'train_loss_in_eval': args.train_loss_in_eval,
     'warmup_seq_length': args.warmup_seq_length,
     'forecast_seq_length': args.forecast_seq_length,
-    'forecast_warmup': args.forecast_warmup
 }
 
 hyperparameters = model_hyperparameters | train_hyperparameters
@@ -310,6 +302,6 @@ if args.loss_on_decoded:
 training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 
                epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, optimizer=optimizer, 
                lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, 
-               train_samples=train_dataset.num_sampels, batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
+               train_samples=train_dataset.num_samples, batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
                initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval, early_stopping_threshold=EARLY_STOPPING_THRESHOLD, 
-               model_forward_kwargs={'steps': args.forecast_seq_length, 'output_whole_warmup': args.forecast_warmup})
+               model_forward_kwargs={'steps': args.forecast_seq_length})

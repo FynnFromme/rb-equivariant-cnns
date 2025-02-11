@@ -21,11 +21,12 @@ class RBSteerableForecaster(enn.EquivariantModule):
         gspace: GSpace,
         autoencoder: torch.nn.Module,
         num_layers: int,
-        input_channels: int,
+        latent_channels: int,
         hidden_channels: list[int],
         latent_dims: tuple[int],
         v_kernel_size: int,
         h_kernel_size: int,
+        use_lstm_encoder: bool = True,
         residual_connection: bool = True,
         nonlinearity: Literal['relu', 'elu', 'tanh'] = 'tanh',
         drop_rate: float = 0,
@@ -36,9 +37,11 @@ class RBSteerableForecaster(enn.EquivariantModule):
     ):
         super().__init__()
         
+        self.use_lstm_encoder = use_lstm_encoder
+        
         self.gspace = gspace
         
-        self.input_channels = input_channels
+        self.latent_channels = latent_channels
         self.hidden_channels = hidden_channels
         self.latent_dims = latent_dims
         self.residual_connection = residual_connection
@@ -48,23 +51,39 @@ class RBSteerableForecaster(enn.EquivariantModule):
         self.train_autoencoder = train_autoencoder
         
         self.field_type = [gspace.regular_repr]
-        self.lstm = RBSteerableConvLSTM(gspace=gspace,
-                                        num_layers=num_layers, 
-                                        in_fields=input_channels*self.field_type, 
-                                        hidden_fields=[hc*self.field_type for hc in hidden_channels],
-                                        dims=latent_dims, 
-                                        v_kernel_size=v_kernel_size, 
-                                        h_kernel_size=h_kernel_size, 
-                                        nonlinearity=nonlinearity,
-                                        drop_rate=drop_rate,
-                                        recurrent_drop_rate=recurrent_drop_rate,
-                                        bias=True)
         
-        self.dropout = enn.PointwiseDropout(self.lstm.out_type, drop_rate)
+        if use_lstm_encoder:
+            self.lstm_encoder = RBSteerableConvLSTM(gspace=gspace,
+                                                    num_layers=num_layers, 
+                                                    in_fields=latent_channels*self.field_type, 
+                                                    hidden_fields=[hc*self.field_type for hc in hidden_channels],
+                                                    dims=latent_dims, 
+                                                    v_kernel_size=v_kernel_size, 
+                                                    h_kernel_size=h_kernel_size, 
+                                                    nonlinearity=nonlinearity,
+                                                    drop_rate=drop_rate,
+                                                    recurrent_drop_rate=recurrent_drop_rate,
+                                                    bias=True)
+        else:
+            self.lstm_encoder = None
+            
+        self.lstm_decoder = RBSteerableConvLSTM(gspace=gspace,
+                                                num_layers=num_layers, 
+                                                in_fields=latent_channels*self.field_type, 
+                                                hidden_fields=[hc*self.field_type for hc in hidden_channels],
+                                                dims=latent_dims, 
+                                                v_kernel_size=v_kernel_size, 
+                                                h_kernel_size=h_kernel_size, 
+                                                nonlinearity=nonlinearity,
+                                                drop_rate=drop_rate,
+                                                recurrent_drop_rate=recurrent_drop_rate,
+                                                bias=True)
+        
+        self.dropout = enn.PointwiseDropout(self.lstm_decoder.out_type, drop_rate)
         
         self.output_conv = RBSteerableConv(gspace=gspace,
                                            in_fields=hidden_channels[-1]*self.field_type,
-                                           out_fields=input_channels*self.field_type,
+                                           out_fields=latent_channels*self.field_type,
                                            in_dims=latent_dims,
                                            v_kernel_size=v_kernel_size,
                                            h_kernel_size=h_kernel_size,
@@ -72,23 +91,24 @@ class RBSteerableForecaster(enn.EquivariantModule):
                                            h_pad_mode='circular',
                                            bias=True)
         
+        first_lstm = self.lstm_encoder if use_lstm_encoder else self.lstm_decoder
         if autoencoder is not None:
             self.in_type, self.out_type = self.autoencoder.in_type, self.autoencoder.out_type
             self.in_fields, self.out_fields = self.autoencoder.in_fields, self.autoencoder.out_fields
             self.in_dims, self.out_dims = self.autoencoder.in_dims, self.autoencoder.out_dims
             self.in_height, self.out_height = self.autoencoder.in_dims[-1], self.autoencoder.out_dims[-1]
         else:
-            self.in_type, self.out_type = self.lstm.in_type, self.output_conv.out_type
-            self.in_fields, self.out_fields = self.lstm.in_fields, self.output_conv.out_fields
-            self.in_dims, self.out_dims = self.lstm.in_dims, self.output_conv.out_dims
-            self.in_height, self.out_height = self.lstm.in_height, self.output_conv.out_height
-        self.in_latent_type, self.out_latent_type = self.lstm.in_type, self.output_conv.out_type
-        self.in_latent_fields, self.out_latent_fields = self.lstm.in_fields, self.output_conv.out_fields
-        self.in_latent_dims, self.out_latent_dims = self.lstm.in_dims, self.output_conv.out_dims
-        self.in_latent_height, self.out_latent_height = self.lstm.in_height, self.output_conv.out_height
+            self.in_type, self.out_type = first_lstm.in_type, self.output_conv.out_type
+            self.in_fields, self.out_fields = first_lstm.in_fields, self.output_conv.out_fields
+            self.in_dims, self.out_dims = first_lstm.in_dims, self.output_conv.out_dims
+            self.in_height, self.out_height = first_lstm.in_height, self.output_conv.out_height
+        self.in_latent_type, self.out_latent_type = first_lstm.in_type, self.output_conv.out_type
+        self.in_latent_fields, self.out_latent_fields = first_lstm.in_fields, self.output_conv.out_fields
+        self.in_latent_dims, self.out_latent_dims = first_lstm.in_dims, self.output_conv.out_dims
+        self.in_latent_height, self.out_latent_height = first_lstm.in_height, self.output_conv.out_height
             
         
-    def forward(self, warmup_input, steps=1, output_whole_warmup=False):
+    def forward(self, warmup_input, steps=1):
         # input shape [batch, seq, width, depth, height, channels]
         
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
@@ -103,7 +123,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
             warmup_latent = warmup_input
         
         
-        output_latent = self.forward_latent(warmup_latent, steps, output_whole_warmup)
+        output_latent = self.forward_latent(warmup_latent, steps)
 
         if self.autoencoder is not None:
             # decode into original space
@@ -113,28 +133,33 @@ class RBSteerableForecaster(enn.EquivariantModule):
         
         return output
     
-    def forward_latent(self, warmup_input: torch.Tensor, steps=1, output_whole_warmup=False):
+    def forward_latent(self, warmup_input: torch.Tensor, steps=1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
-        # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
-        # len(warmup_input) predictions wuring warmup rather than just the last one
         
         dims = warmup_input.shape[2:5]
         assert tuple(dims) == tuple(self.latent_dims)
         
         warmup_input = self._from_input_shape(warmup_input)
         warmup_length = warmup_input.shape[1]
-        geom_warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
+        geom_warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm_decoder.in_type) for t in range(warmup_length)]
         
-        geom_outputs = self._forward_geometric_latent(geom_warmup_input, steps, output_whole_warmup)
+        geom_outputs = self._forward_geometric_latent(geom_warmup_input, steps)
             
         output = torch.stack([geom_tensor.tensor for geom_tensor in geom_outputs], dim=1)
         
         output = self._to_output_shape(output)
         return output
     
-    def _forward_geometric_latent(self, warmup_input: list[GeometricTensor], steps=1, output_whole_warmup=False):
-        lstm_autoregressor = self.lstm.autoregress(warmup_input, steps, output_whole_warmup)
+    def _forward_geometric_latent(self, warmup_input: list[GeometricTensor], steps=1):
+        if self.use_lstm_encoder:
+            _, encoded_state = self.lstm_encoder.forward(warmup_input)
+            decoder_input = [warmup_input[-1]]
+        else:
+            encoded_state = None
+            decoder_input = warmup_input
+            
+        lstm_autoregressor = self.lstm_decoder.autoregress(decoder_input, steps, encoded_state)
         
         lstm_input = None # warmup_input is already provided to LSTM
         outputs = []
@@ -144,7 +169,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
             
             if self.residual_connection:
                 if i == 0:
-                    res_input = warmup_input if output_whole_warmup else [warmup_input[-1]]
+                    res_input = [warmup_input[-1]]
                 else:
                     res_input = lstm_input
                 out = [res + o for res, o in zip(res_input, out)]
@@ -249,11 +274,16 @@ class RBSteerableForecaster(enn.EquivariantModule):
         # LSTM   
         out_shapes = []
         layer_params = []
-        for i, cell in enumerate(self.lstm.cells, 1):
-            out_shapes.append((f'LSTM{i}', [len(cell.hidden_fields), sum(f.size for f in self.field_type), *cell.dims]))
-            layer_params.append((f'LSTM{i}', model_utils.count_trainable_params(cell)))
+        if self.use_lstm_encoder:
+            for i, cell in enumerate(self.lstm_encoder.cells, 1):
+                out_shapes.append((f'EncoderLSTM{i}', [len(cell.hidden_fields), sum(f.size for f in self.field_type), *cell.dims]))
+                layer_params.append((f'EncoderLSTM{i}', model_utils.count_trainable_params(cell)))
             
-        out_shapes.append(('LSTM-Head', [self.input_channels, sum(f.size for f in self.field_type), *self.latent_dims]))
+        for i, cell in enumerate(self.lstm_decoder.cells, 1):
+            out_shapes.append((f'DecoderLSTM{i}', [len(cell.hidden_fields), sum(f.size for f in self.field_type), *cell.dims]))
+            layer_params.append((f'DecoderLSTM{i}', model_utils.count_trainable_params(cell)))
+            
+        out_shapes.append(('LSTM-Head', [self.latent_channels, sum(f.size for f in self.field_type), *self.latent_dims]))
         layer_params.append((f'LSTM-Head', model_utils.count_trainable_params(self.output_conv)))
         latent_shape = out_shapes[-1][1]
         
@@ -305,13 +335,13 @@ class RBSteerableForecaster(enn.EquivariantModule):
         warmup_input = torch.randn(batch_size, 
                                    warmup_length, 
                                    *self.latent_dims,
-                                   sum(field.size for field in self.lstm.in_fields))
+                                   sum(field.size for field in self.lstm_decoder.in_fields))
         
         if gpu_device is not None: 
             warmup_input = warmup_input.to(gpu_device)
         
         warmup_input = self._from_input_shape(warmup_input)
-        warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm.in_type) for t in range(warmup_length)]
+        warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm_decoder.in_type) for t in range(warmup_length)]
         
         errors = []
         for el in self.in_type.testing_elements:

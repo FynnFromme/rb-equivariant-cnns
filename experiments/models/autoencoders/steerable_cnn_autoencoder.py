@@ -169,7 +169,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         self.out_shapes[f'LatentConv'] = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
         self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
             
-        self.latent_shape = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
+        self.latent_shape = [*in_dims, sum(f.size for f in out_fields)]
             
         #####################
         ####   Decoder   ####
@@ -351,8 +351,8 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
             Tensor: Transformed tensor of shape [batch, width, depth, height, sum(fieldsizes)]
         """
         b = tensor.shape[0]
-        c, t, w, d, h = self.latent_shape
-        return tensor.reshape(b, h, c*t, w, d).permute(0, 3, 4, 1, 2)
+        w, d, h, f = self.latent_shape
+        return tensor.reshape(b, h, f, w, d).permute(0, 3, 4, 1, 2)
     
     
     def _from_latent_shape(self, tensor: Tensor) -> Tensor:
@@ -365,8 +365,8 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         Returns:
             Tensor: Transformed tensor of shape [batch, height*sum(fieldsizes), width, depth]
         """
-        b, w, d, h, ct = tensor.shape
-        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*ct, w, d)
+        b, w, d, h, f = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*f, w, d)
     
     
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:
@@ -431,4 +431,4 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
     
     def summary(self):
         """Print summary of the model."""
-        model_utils.summary(self, self.out_shapes, self.layer_params, self.latent_shape)
+        model_utils.summary(self, self.out_shapes, self.layer_params, self.out_shapes['LatentConv'])

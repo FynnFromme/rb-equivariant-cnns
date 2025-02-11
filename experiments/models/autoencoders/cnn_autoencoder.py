@@ -139,7 +139,7 @@ class RBAutoencoder(nn.Module):
         self.out_shapes[f'LatentConv'] = [latent_channels, *in_dims]
         self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
         
-        self.latent_shape = [latent_channels, *in_dims]
+        self.latent_shape = [*in_dims, latent_channels]
             
         #####################
         ####   Decoder   ####
@@ -288,7 +288,7 @@ class RBAutoencoder(nn.Module):
             Tensor: Transformed tensor of shape [batch, width, depth, height, channels]
         """
         b = tensor.shape[0]
-        c, w, d, h = self.latent_shape
+        w, d, h, c = self.latent_shape
         return tensor.reshape(b, h, c, w, d).permute(0, 3, 4, 1, 2)
     
     
@@ -308,4 +308,4 @@ class RBAutoencoder(nn.Module):
         
     def summary(self):
         """Print summary of the model."""
-        model_utils.summary(self, self.out_shapes, self.layer_params, self.latent_shape)
+        model_utils.summary(self, self.out_shapes, self.layer_params, self.out_shapes['LatentConv'])

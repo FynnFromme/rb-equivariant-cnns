@@ -144,6 +144,12 @@ class RB3DConvLSTM(Module):
         self.hidden_channels = hidden_channels
         self.dims = dims
         
+        self.in_height = dims[-1]
+        self.out_height = self.in_height
+        
+        self.in_dims = dims
+        self.out_dims = dims
+        
         self.cells = torch.nn.ModuleList()
         for i in range(num_layers):
             layer_in_channels = input_channels if i == 0 else hidden_channels[i-1]
@@ -192,8 +198,7 @@ class RB3DConvLSTM(Module):
             return layer_output, state
     
     
-    def autoregress(self, warmup_input, steps, output_whole_warmup=False):
-        state = None
+    def autoregress(self, warmup_input, steps, state=None, output_whole_warmup=False):
         input = warmup_input
         for i in range(steps):
             only_last_output = i > 0 or not output_whole_warmup

@@ -276,8 +276,7 @@ class RBSteerableConvLSTM(enn.EquivariantModule):
         else:
             return layer_hidden_states, state
     
-    def autoregress(self, warmup_input: list[GeometricTensor], steps, output_whole_warmup=False):
-        state = None
+    def autoregress(self, warmup_input: list[GeometricTensor], steps, state=None, output_whole_warmup=False):
         input = warmup_input
         for i in range(steps):
             only_last_output = i > 0 or not output_whole_warmup

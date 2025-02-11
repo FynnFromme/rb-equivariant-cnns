@@ -16,10 +16,7 @@ def compute_latent_dataset(autoencoder, latent_file, sim_file, device, batch_siz
     N_train, N_valid, N_test = dataset.num_samples(sim_file, ['train', 'valid', 'test'])
     snapshots_per_file = dataset.num_samples_per_sim(sim_file, 'train')
     
-    *c, w, d, h = autoencoder.latent_shape # for steerable autoencoders the channel dimension is split here
-    latent_shape = (w, d, h, np.prod(c))
-    
-    h5file = _create_h5_datasets(latent_file, latent_shape, N_train, N_valid, N_test, snapshots_per_file)
+    h5file = _create_h5_datasets(latent_file, autoencoder.latent_shape, N_train, N_valid, N_test, snapshots_per_file)
 
     # compute latent representations and store in file
     for ds_name in ['train', 'valid', 'test']:

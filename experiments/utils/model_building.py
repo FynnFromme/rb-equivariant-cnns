@@ -154,7 +154,7 @@ def build_RB3DForecaster(models_dir: str, ae_model_name: str, ae_train_name: str
                          h_kernel_size: int, drop_rate: float, recurrent_drop_rate: float, nonlinearity, 
                          include_autoencoder: bool, **kwargs):
     autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
-    latent_channels, *latent_dims = autoencoder.latent_shape
+    *latent_dims, latent_channels = autoencoder.latent_shape
     
     if not include_autoencoder:
         del autoencoder
@@ -164,7 +164,7 @@ def build_RB3DForecaster(models_dir: str, ae_model_name: str, ae_train_name: str
     
     return RB3DForecaster(autoencoder=autoencoder, 
                           num_layers=len(lstm_channels), 
-                          input_channels=latent_channels, 
+                          latent_channels=latent_channels, 
                           hidden_channels=lstm_channels, 
                           latent_dims=latent_dims, 
                           v_kernel_size=v_kernel_size, 
@@ -178,7 +178,9 @@ def build_RBSteerableForecaster(models_dir: str, ae_model_name: str, ae_train_na
                                 lstm_channels: int, v_kernel_size: int, h_kernel_size: int, drop_rate: float, 
                                 recurrent_drop_rate: float, nonlinearity, include_autoencoder: bool, **kwargs):
     autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', ae_model_name), ae_train_name)
-    latent_channels, G_size, *latent_dims = autoencoder.latent_shape
+    G_size = 2*rots if flips else rots
+    *latent_dims, latent_fieldsizes = autoencoder.latent_shape
+    latent_channels = latent_fieldsizes//G_size
     
     if not include_autoencoder:
         del autoencoder
@@ -190,7 +192,7 @@ def build_RBSteerableForecaster(models_dir: str, ae_model_name: str, ae_train_na
     return RBSteerableForecaster(gspace=gspace(N=rots),
                                  autoencoder=autoencoder, 
                                  num_layers=len(lstm_channels), 
-                                 input_channels=latent_channels, 
+                                 latent_channels=latent_channels, 
                                  hidden_channels=lstm_channels, 
                                  latent_dims=latent_dims, 
                                  v_kernel_size=v_kernel_size, 

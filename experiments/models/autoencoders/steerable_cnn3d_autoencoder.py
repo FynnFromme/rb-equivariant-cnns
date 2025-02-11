@@ -162,7 +162,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         self.out_shapes[f'LatentConv'] = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
         self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
             
-        self.latent_shape = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
+        self.latent_shape = [*in_dims, sum(f.size for f in out_fields)]
             
         #####################
         ####   Decoder   ####
@@ -417,4 +417,4 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
     
     def summary(self):
         """Print summary of the model."""
-        model_utils.summary(self, self.out_shapes, self.layer_params, self.latent_shape)
+        model_utils.summary(self, self.out_shapes, self.layer_params, self.out_shapes['LatentConv'])

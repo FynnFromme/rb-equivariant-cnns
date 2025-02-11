@@ -96,20 +96,11 @@ SIMULATION_NAME = args.simulation_name
 
 sim_file = os.path.join(EXPERIMENT_DIR, '..', 'data', 'datasets', f'{SIMULATION_NAME}.h5')
 
-N_train_avail, N_valid_avail, N_test_avail = dataset.num_samples(sim_file, ['train', 'valid', 'test'])
-
-# Reduce the amount of data manually
-N_TRAIN = min(args.n_train, N_train_avail) if args.n_train > 0 else N_train_avail
-N_VALID = min(args.n_valid, N_valid_avail) if args.n_valid > 0 else N_valid_avail
-
-train_dataset = dataset.RBDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=N_TRAIN)
-valid_dataset = dataset.RBDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=N_VALID)
+train_dataset = dataset.RBDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=args.n_train)
+valid_dataset = dataset.RBDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=args.n_valid)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
 valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, num_workers=0, drop_last=False)
-
-print(f'Using {N_TRAIN}/{N_train_avail} training samples')
-print(f'Using {N_VALID}/{N_valid_avail} validation samples')
 
 
 
@@ -226,8 +217,8 @@ EPOCHS = args.epochs - loaded_epoch
 
 train_hyperparameters = {
     'batch_size': BATCH_SIZE,
-    'n_train': N_TRAIN,
-    'n_valid': N_VALID,
+    'n_train': train_dataset.num_samples,
+    'n_valid': valid_dataset.num_samples,
     'learning_rate': LEARNING_RATE,
     'optimizer': str(OPTIMIZER),
     'lr_decay': LR_DECAY,

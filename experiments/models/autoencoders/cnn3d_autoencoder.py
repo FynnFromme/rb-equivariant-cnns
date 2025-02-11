@@ -109,8 +109,8 @@ class RB3DAutoencoder(nn.Sequential):
             encoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
                                                out_channels=out_channels, 
                                                in_dims=in_dims, 
-                                               v_kernel_size=latent_v_kernel_size, 
-                                               h_kernel_size=latent_h_kernel_size,
+                                               v_kernel_size=v_kernel_size, 
+                                               h_kernel_size=h_kernel_size,
                                                input_drop_rate=layer_drop_rate, 
                                                nonlinearity=nonlinearity, 
                                                batch_norm=True))
@@ -133,8 +133,8 @@ class RB3DAutoencoder(nn.Sequential):
         encoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
                                            out_channels=latent_channels, 
                                            in_dims=in_dims, 
-                                           v_kernel_size=v_kernel_size, 
-                                           h_kernel_size=h_kernel_size,
+                                           v_kernel_size=latent_v_kernel_size, 
+                                           h_kernel_size=latent_h_kernel_size,
                                            input_drop_rate=drop_rate, 
                                            nonlinearity=nonlinearity, 
                                            batch_norm=True))
@@ -304,4 +304,4 @@ class RB3DAutoencoder(nn.Sequential):
     
     def summary(self):
         """Print summary of the model."""
-        model_utils.summary(self, self.out_shapes, self.layer_params, self.latent_shape)
+        model_utils.summary(self, self.out_shapes, self.layer_params, self.out_shapes['LatentConv'])
