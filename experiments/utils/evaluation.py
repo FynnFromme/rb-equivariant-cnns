@@ -141,7 +141,17 @@ def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, sampl
     try:
         for batch, _ in tqdm(dataloader, total=samples):
             # Compute the Jacobian for the current batch
-            jacobian_batch = torch.autograd.functional.jacobian(model.encode, batch, vectorize=True)
+            
+            # Compute the Jacobian for the current batch
+            channel_gradients = []
+            num_channels = model.encode(batch).size(-1)
+            for channel in range(1, num_channels, 2):
+                end_channel = min(channel+2, num_channels)
+                jacobian_batch = torch.autograd.functional.jacobian(lambda x: model.encode(x)[..., channel:end_channel], 
+                                                                    batch, vectorize=True)
+                channel_gradients.append(jacobian_batch) # of shape (b,lw,ld,lh,lc,b,w,d,h,c) - l stands for latent
+                    
+            jacobian_batch = torch.cat(channel_gradients , dim=4) # concat along latent channel dimension
             
             # remove batch=1 dimension
             jacobian_batch = torch.squeeze(jacobian_batch)
@@ -173,9 +183,91 @@ def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, sampl
             torch.save({'avg_sensitivity': average_jacobian,
                         'avg_abs_sensitivity': average_jacobian_abs,
                         'n': n},
-                        os.path.join(save_dir, filename+'.pt'))
+                        os.path.join(save_dir, filename+'.pt'),
+                        pickle_protocol=4)
 
     return average_jacobian, average_jacobian_abs
+
+
+def compute_latent_integrated_gradients(model: torch.nn.Module, dataset: RBDataset, samples: int = None, save_dir: str = None, filename: str = None, 
+                                        steps: int = 50, num_channels: int = None, batch_size: int = 1):
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=False)
+
+    model.eval()
+    aggregated_ig = None
+    aggregated_abs_ig = None
+    baseline = None
+    
+    n = 0
+    try:
+        for batch, _ in tqdm(dataloader, total=samples):
+            if baseline is None:
+                baseline = torch.zeros_like(batch)
+            
+            output_channels = model.encode(batch).size(-1)
+            num_channels = min(output_channels, num_channels) if num_channels else output_channels
+            
+            ig = None
+            for step in tqdm(range(1, steps+1), total=steps):
+                input = baseline + step/steps * (batch-baseline)
+                
+                
+                # Compute the Jacobian for the current batch
+                channel_gradients = []
+                for channel in range(1, num_channels, 16):
+                    end_channel = min(channel+16, num_channels)
+                    channel_gradient = torch.autograd.functional.jacobian(lambda x: model.encode(x)[..., channel:end_channel], input, vectorize=True)
+                    channel_gradients.append(channel_gradient) # of shape (b,lw,ld,lh,lc,b,w,d,h,c) - l stands for latent
+                    
+                gradients = torch.cat(channel_gradients , dim=4) # concat along latent channel dimension
+                
+                # remove batch=1 dimensions
+                gradients = torch.squeeze(gradients)
+                
+                if num_channels == 1:
+                    gradients = gradients.unsqueeze(3) # add 1 latent channel dimension
+                
+                if ig is None:
+                    ig = torch.zeros_like(gradients)
+                    
+                ig += gradients * 1/steps
+                
+            ig = (batch-baseline) * ig
+            
+            delta = torch.sum(ig) - torch.sum(model.encode(batch)[..., num_channels] - model.encode(baseline)[..., num_channels])
+            print(delta.item())
+                    
+
+            # Initialize the aggregator if not done yet
+            if aggregated_ig is None:
+                aggregated_ig = torch.zeros_like(ig)
+                aggregated_abs_ig = torch.zeros_like(ig)
+
+            # Sum the absolute Jacobian values
+            aggregated_ig += ig
+            aggregated_abs_ig += ig.abs()
+            
+            n += batch.size(0)
+            
+            if samples is not None and n >= samples:
+                break
+    finally:
+        # Average over all test samples
+        avg_ig = aggregated_ig.cpu().detach().numpy() / n
+        avg_abs_ig = aggregated_abs_ig.cpu().detach().numpy() / n
+        
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            if filename is None:
+                filename = 'latent_sensitivity'
+            torch.save({'avg_ig': avg_ig,
+                        'avg_abs_ig': avg_abs_ig,
+                        'n': n,
+                        'steps': steps},
+                        os.path.join(save_dir, filename+'.pt'),
+                        pickle_protocol=4)
+
+    return avg_ig, avg_abs_ig
 
 
 def load_latent_sensitivity(save_dir: str, filename: str):

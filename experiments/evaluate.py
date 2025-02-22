@@ -29,6 +29,7 @@ parser = ArgumentParser()
 parser.add_argument('model_name', type=str)
 parser.add_argument('train_name', type=str)
 
+# for forecasters only
 parser.add_argument('-loss_on_latent', action='store_true', default=False)
 parser.add_argument('-warmup_seq_length', type=int, default=10)
 parser.add_argument('-forecast_seq_length', type=int, default=3)
@@ -236,6 +237,7 @@ if args.eval_autoregressive_performance:
         performance['rmse_median'] = list(np.sqrt(performance['mse_median']))
         performance['rmse_lower'] = list(np.sqrt(performance['mse_lower']))
         performance['rmse_upper'] = list(np.sqrt(performance['mse_upper']))
+        save_json(performance, performance_file)
 
         avgs, medians, lower_bounds, upper_bounds = compute_autoregressive_loss(model, 
                                                                                 args.autoregressive_forecast_seq_length, 
@@ -390,10 +392,13 @@ if args.compute_latent_sensitivity:
     if is_forecast_model:
         print('Latent sensitivtiy can only be computed for autoencoders')
     else:
-        SAMPLES = min(args.latent_sensitivity_samples, N_test_avail) if args.latent_sensitivity_samples > 0 else N_test_avail
-        sensitivity_dataset = dataset.RBDataset(sim_file, 'test', device=DEVICE, shuffle=False, samples=SAMPLES)
+        sensitivity_dataset = dataset.RBDataset(sim_file, 'test', device=DEVICE, shuffle=True)
+        if (args.latent_sensitivity_samples > 0):
+            samples = min(sensitivity_dataset.num_samples, args.latent_sensitivity_samples) 
+        else:
+            samles = sensitivity_dataset.num_samples
         
         avg_sensitivity, avg_abs_sensitivity = compute_latent_sensitivity(model, sensitivity_dataset, 
-                                                                          samples=sensitivity_dataset.num_samples, 
+                                                                          samples=samples, 
                                                                           save_dir=results_dir,
                                                                           filename='latent_sensitivity')
