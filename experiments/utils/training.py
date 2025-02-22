@@ -155,9 +155,15 @@ def train_loop(train_loader: DataLoader,
             
             if data_augmentation:
                 x, y = data_augmentation(x, y)
-            
+                
+            train_model_forward_kwargs = model_forward_kwargs.copy()
+            if 'epoch' in train_model_forward_kwargs:
+                train_model_forward_kwargs['epoch'] = epochnum
+            if 'ground_truth' in train_model_forward_kwargs:
+                train_model_forward_kwargs['ground_truth'] = y
+
             # Compute prediction and loss
-            pred = model(x, **model_forward_kwargs)
+            pred = model(x, **train_model_forward_kwargs)
 
             loss = loss_fn(pred, y)
             cur_batch_size = x.size(0)

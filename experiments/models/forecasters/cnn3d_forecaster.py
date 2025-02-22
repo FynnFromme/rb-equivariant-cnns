@@ -7,6 +7,8 @@ from layers.lstm.conv3d_lstm import RB3DConvLSTM
 from experiments.models import model_utils
 from collections import OrderedDict
 
+import random
+
 #! TODO LayerNorm?
 #! parameter initialization
 class RB3DForecaster(Module):
@@ -26,6 +28,10 @@ class RB3DForecaster(Module):
         recurrent_drop_rate: float = 0,
         parallel_ops: bool = True, # applies autoencoder and output layer in parallel (might result in out of memory for large sequences)
         train_autoencoder: bool = False,
+        min_forced_decoding_prob: float = 0,
+        init_forced_decoding_prob: float = 1,
+        forced_decoding_epochs: float = 100,
+        backprop_through_autoregression: bool = True,
         **kwargs
     ):
         super().__init__()
@@ -37,9 +43,15 @@ class RB3DForecaster(Module):
         self.latent_dims = latent_dims
         self.residual_connection = residual_connection
         
+        self.backprop_through_autoregression = backprop_through_autoregression
+        
         self.autoencoder = autoencoder
         self.train_autoencoder = train_autoencoder
         self.parallel_ops = parallel_ops
+        
+        self.min_forced_decoding_prob = min_forced_decoding_prob
+        self.init_forced_decoding_prob = init_forced_decoding_prob
+        self.forced_decoding_epochs = forced_decoding_epochs
         
         if use_lstm_encoder:
             self.lstm_encoder = RB3DConvLSTM(num_layers=num_layers, 
@@ -88,7 +100,7 @@ class RB3DForecaster(Module):
         self.in_latent_height, self.out_latent_height = first_lstm.in_height, self.output_conv.out_height
         
         
-    def forward(self, warmup_input, steps=1):
+    def forward(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
@@ -105,7 +117,7 @@ class RB3DForecaster(Module):
         else:
             warmup_latent = warmup_input
             
-        output_latent = self.forward_latent(warmup_latent, steps)
+        output_latent = self.forward_latent(warmup_latent, steps, ground_truth, epoch)
         
         # decode into original space
         if self.autoencoder is not None:
@@ -115,14 +127,20 @@ class RB3DForecaster(Module):
         
         return output
     
-    def forward_latent(self, warmup_input, steps=1):
+    def forward_latent(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         warmup_input = self._from_input_shape(warmup_input)
         
+        if ground_truth is not None:
+            ground_truth = self._from_input_shape(ground_truth)
+        
         input_channels, *dims = warmup_input.shape[2:]
         assert input_channels == self.latent_channels
         assert tuple(dims) == tuple(self.latent_dims)
+        
+        if ground_truth is not None:
+            assert ground_truth.size(1) == steps
         
         if self.use_lstm_encoder:
             _, encoded_state = self.lstm_encoder.forward(warmup_input)
@@ -147,7 +165,21 @@ class RB3DForecaster(Module):
                 out = res_input + out
             
             outputs.append(out)
-            lstm_input = out[:, [-1]]
+            
+            if self.training and ground_truth is not None and epoch >= 0:
+                forced_decoding_prob = max(self.min_forced_decoding_prob, 
+                                           self.init_forced_decoding_prob * (1 - (epoch-1)/self.forced_decoding_epochs))
+            else:
+                forced_decoding_prob = 0
+            forced_decoding = random.random() < forced_decoding_prob
+
+            if forced_decoding:
+                lstm_input = ground_truth[:, [i]]
+            else:
+                lstm_input = out[:, [-1]]
+                if not self.backprop_through_autoregression:
+                    lstm_input = lstm_input.detach()
+
         output = torch.cat(outputs, dim=1)
             
         output = self._to_output_shape(output)

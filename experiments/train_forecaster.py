@@ -63,10 +63,15 @@ parser.add_argument('-residual_connection', type=str2bool, default=True)
 parser.add_argument('-use_lstm_encoder', type=str2bool, default=True)
 
 # training hyperparameters
-parser.add_argument('-warmup_seq_length', type=int, default=10)
-parser.add_argument('-forecast_seq_length', type=int, default=5)
+parser.add_argument('-warmup_seq_length', type=int, default=25)
+parser.add_argument('-forecast_seq_length', type=int, default=50)
 parser.add_argument('-parallel_ops', action='store_true', default=False)
 parser.add_argument('-loss_on_decoded', action='store_true', default=False)
+parser.add_argument('-init_forced_decoding_prob', type=float, default=1)
+parser.add_argument('-min_forced_decoding_prob', type=float, default=0)
+parser.add_argument('-forced_decoding_epochs', type=int, default=100)
+parser.add_argument('-use_force_decoding', type=bool, default=True)
+parser.add_argument('-backprop_through_autoregression', type=bool, default=True)
 
 parser.add_argument('-train_autoencoder', action='store_true', default=False)
 parser.add_argument('-lr', type=float, default=1e-3)
@@ -80,6 +85,13 @@ args = parser.parse_args()
 
 if args.train_autoencoder and not args.loss_on_decoded:
     raise Exception('When training the autoencoder, the loss must be computed on the decoded output.')
+
+if args.loss_on_decoded and args.use_force_decoding:
+    raise Exception('When training on decoded data, force decoding the latent space is not supported')
+
+if not args.use_force_decoding:
+    args.init_forced_decoding_prob = 0
+    args.min_forced_decoding_prob = 0
 
 ########################
 # Seed and GPU
@@ -198,7 +210,12 @@ model_hyperparameters = {
     'residual_connection': args.residual_connection,
     'train_autoencoder': args.train_autoencoder,
     'include_autoencoder': args.loss_on_decoded,
-    'use_lstm_encoder': args.use_lstm_encoder
+    'use_lstm_encoder': args.use_lstm_encoder,
+    'init_forced_decoding_prob': args.init_forced_decoding_prob,
+    'min_forced_decoding_prob': args.min_forced_decoding_prob,
+    'forced_decoding_epochs': args.forced_decoding_epochs,
+    'use_force_decoding': args.use_force_decoding,
+    'backprop_through_autoregression': args.backprop_through_autoregression
 }
 
 model = build_forecaster(models_dir=models_dir, **model_hyperparameters)
@@ -227,10 +244,15 @@ optimizer = OPTIMIZER(trainable_parameters, lr=LEARNING_RATE, weight_decay=WEIGH
 if args.loss_on_decoded:
     data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4))
 else:
-    # TODO fix: will cause errors if model.gspace != gspace
-    model_gspace = model.gspace if isinstance(model, enn.EquivariantModule) else None
-    data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4), 
-                                         latent=True, latent_channels=model.latent_channels, model_gspace=model_gspace)
+    if isinstance(model, enn.EquivariantModule):
+        # TODO fix: will cause errors if model.gspace != gspace
+        data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4), 
+                                            latent=True, latent_channels=model.latent_channels, model_gspace=model.gspace)
+    else:
+        # No DataAugmentation of latent spaces for non-equivariant models
+        # as a rotation in the original input wouldn't result in a rotation
+        # of the latent space
+        data_augmentation = None
 
 
 START_EPOCH = args.start_epoch # loads pretrained model if greater 0, loads last available epoch for -1
@@ -243,7 +265,7 @@ initial_early_stop_count, loaded_epoch = training.load_trained_model(model=model
                                                                      epoch=START_EPOCH)
 
 lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=LR_DECAY_PATIENCE, 
-                                                          factor=LR_DECAY)
+                                                          factor=LR_DECAY, threshold=1e-5)
 
 EPOCHS = args.epochs - loaded_epoch
 
@@ -304,4 +326,4 @@ training.train(model=model, models_dir=models_dir, model_name=model_name, train_
                lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, 
                train_samples=train_dataset.num_samples, batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
                initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval, early_stopping_threshold=EARLY_STOPPING_THRESHOLD, 
-               model_forward_kwargs={'steps': args.forecast_seq_length})
+               model_forward_kwargs={'steps': args.forecast_seq_length, 'epoch': None, 'ground_truth': None})
