@@ -39,20 +39,20 @@ def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, dataset: R
 
 
 def rb_model_animation(model: torch.nn.Module, 
-                           axis: int,
-                           anim_dir: str, 
-                           anim_name: str, 
-                           slice: int, 
-                           fps: int, 
-                           sim_file: str, 
-                           device: str,
-                           feature: Literal['t', 'u', 'v', 'w'],
-                           dataset='test', 
-                           batch_size=32,
-                           frames=np.inf):
+                       axis: int,
+                       anim_dir: str, 
+                       anim_name: str, 
+                       slice: int, 
+                       fps: int, 
+                       sim_file: str, 
+                       device: str,
+                       feature: Literal['t', 'u', 'v', 'w'],
+                       dataset_name='test', 
+                       batch_size=32,
+                       frames=np.inf):
     channel = ['t', 'u', 'v', 'w'].index(feature)
     
-    dataset = RBDataset(sim_file, dataset, device, shuffle=False)
+    dataset = RBDataset(sim_file, dataset_name, device, shuffle=False)
     data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=False)
     
     predicted_batches_gen = _predict_batches(model, data_loader, dataset)
@@ -126,7 +126,7 @@ def rb_model_animation(model: torch.nn.Module,
         
         return orig_im, pred_im
     
-    frames = min(num_samples(sim_file, dataset), frames)
+    frames = min(num_samples(sim_file, dataset_name), frames)
     anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
     
     os.makedirs(anim_dir, exist_ok=True)
@@ -135,36 +135,61 @@ def rb_model_animation(model: torch.nn.Module,
     
     
 def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, num: int, channel: int, 
-                         slice: int, axis: int, cols: int = 5, seed: int = 0, contour: bool = True):
+                         slice: int | None, axis: int, cols: int = 5, seed: int = 0, contour: bool = True,
+                         unified_cbar: bool = True):
+    """Set slice to None to have it automatically pick the slice of highest sensitivity for each pattern"""
+    if slice is not None and unified_cbar is False:
+        print('When using manual slicing, a unified colorbar is recommended. Otherwise small sensitivities will '\
+            'be visualized as relevant patterns.')
+    
     sensitivity_data = sensitivity_data.reshape(-1, *sensitivity_data.shape[-4:]) # flatten latent indices
     random.seed(seed)
     latent_indices = random.sample(range(sensitivity_data.shape[0]), num)
     
     imgs_data = []
     for latent_indx in latent_indices:
-        data = np.rot90(sensitivity_data[latent_indx, :, :, :, channel].take(indices=slice, axis=axis))
+        if slice is None:
+            remaining_axes = tuple({0,1,2}-{axis})
+            highest_sensitivity_slice = np.argmax(abs(sensitivity_data[latent_indx, :, :, :, channel]).mean(axis=remaining_axes))
+            data = np.rot90(sensitivity_data[latent_indx, :, :, :, channel].take(indices=highest_sensitivity_slice, axis=axis))
+        else:
+            data = np.rot90(sensitivity_data[latent_indx, :, :, :, channel].take(indices=slice, axis=axis))
         imgs_data.append(data)
         
-    max_abs_value = max(np.abs(arr).max() for arr in imgs_data)
-    min_value = min(arr.min() for arr in imgs_data)
-    max_value = max(arr.max() for arr in imgs_data)
+    max_abs_values = [np.abs(arr).max() for arr in imgs_data]
+    min_abs_values = [-max_abs for max_abs in max_abs_values]
+    max_values = [arr.max() for arr in imgs_data]
+    min_values = [arr.min() for arr in imgs_data]
+    if unified_cbar:
+        max_abs_value = max(max_abs_values)
+        min_abs_value = -max_abs_value
+        max_value = max(max_values)
+        min_value = min(min_values)        
+        
     img_extent = [0, 2*np.pi, 0, 2*np.pi] if axis == 2 else [0, 2*np.pi, 0, 2] # depending on whether looking from above
 
     fig = plt.figure(figsize=(20, 20))
     grid = ImageGrid(fig, 111,  # similar to subplot(111)
                     nrows_ncols=(math.ceil(num/cols), cols),  # creates 2x2 grid of Axes
                     axes_pad=0.1,  # pad between Axes in inch.
-                    cbar_mode='single')
+                    cbar_mode='single' if unified_cbar else None)
 
-    for ax, im_data in zip(grid, imgs_data):
+    for i, (ax, im_data) in enumerate(zip(grid, imgs_data)):
         ax_show = ax.contourf if contour else ax.imshow
         if abs_sensitivity:
+            if not unified_cbar:
+                min_value = min_values[i]
+                max_value = max_values[i]
             im = ax_show(im_data, vmin=min_value, vmax=max_value, cmap='viridis', extent=img_extent)
         else:
-            im = ax_show(im_data, vmin=-max_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
+            if not unified_cbar:
+                min_abs_value = min_abs_values[i]
+                max_abs_value = max_abs_values[i]
+            im = ax_show(im_data, vmin=min_abs_value, vmax=max_abs_value, cmap='RdBu_r', extent=img_extent)
         ax.axis('off')
         
-    grid.cbar_axes[0].colorbar(im)
+    if unified_cbar:
+        grid.cbar_axes[0].colorbar(im)
     
     plt.show()
     
@@ -186,6 +211,7 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         with open(hyperparameters_file, 'r') as f:
             hyperparameters = json.load(f)
         train_loss_incl_dropout = hyperparameters['drop_rate'] > 0 and not hyperparameters['train_loss_in_eval']
+        train_loss_w_forced_decoding = hyperparameters.get('use_force_decoding', False) and not hyperparameters['train_loss_in_eval']
 
         x = range(1, len(log['train_loss'])+1)
         if time_x:
@@ -195,8 +221,13 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
             ax = plt.subplot(1, 2, 1)
         train_loss = log['train_loss']
         label = f'{model_name}/{train_name} - train'
-        if train_loss_incl_dropout:
+        if train_loss_incl_dropout and train_loss_w_forced_decoding:
+            label += ' (affected by dropout & forced decoding)'
+        elif train_loss_w_forced_decoding:
+            label += ' (affected by forced decoding)'
+        elif train_loss_incl_dropout:
             label += ' (affected by dropout)'
+        
         if smoothing > 0:
             smoothed_train_loss = _exponential_moving_average(train_loss, smoothing)
             smoothed_line, = plt.plot(x, smoothed_train_loss, label=label)
@@ -227,7 +258,8 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         plt.grid(True)
         plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
         plt.ylabel('loss (log-scale)' if log_scale else 'loss')
-        if remove_outliers: plt.ylim(top=_max_upper_bound(train_losses))
+        if remove_outliers: plt.ylim(top=_max_upper_bound(train_losses), 
+                                     bottom=max(plt.ylim()[0], 0))
         
         ax = plt.subplot(1, 2, 2)
         plt.title('Validation Losses')
@@ -237,7 +269,8 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         plt.grid(True)
         plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
         plt.ylabel('loss (log-scale)' if log_scale else 'loss')
-        if remove_outliers: plt.ylim(top=_max_upper_bound(valid_losses))
+        if remove_outliers: plt.ylim(top=_max_upper_bound(valid_losses),
+                                     bottom=max(plt.ylim()[0], 0))
     else:
         plt.title('Losses During Training')
         plt.legend() 
@@ -247,7 +280,8 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
         plt.ylabel('loss (log-scale)' if log_scale else 'loss')
         if remove_outliers: plt.ylim(top=max(_max_upper_bound(train_losses),
-                                             _max_upper_bound(valid_losses)))
+                                             _max_upper_bound(valid_losses)),
+                                     bottom=max(plt.ylim()[0], 0))
     
     if time_x: fig.autofmt_xdate() # auto format
     
@@ -287,11 +321,13 @@ def _darken_color(color, amount=0.5):
     return darker_rgb
 
 
-def plot_performance(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+def plot_performance(results_dir: str, model_names: str | list, train_names: str | list, metric: str,
+                     group_same_model: bool = False, show_train: bool = True):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
     fig = plt.figure(figsize=(8, 5))
+    
     
     performances = []
     performances_train = []
@@ -302,9 +338,28 @@ def plot_performance(results_dir: str, model_names: str | list, train_names: str
         performances.append(results[metric])
         performances_train.append(results[f'{metric}_train'])
         
-    x_labels = [f'{model_name}/{train_name}' for model_name, train_name in zip(model_names, train_names)]
-    plt.plot(x_labels, performances, label=f'test {metric.upper()}', marker='o', linestyle='--')
-    plt.plot(x_labels, performances_train, label=f'train {metric.upper()}', marker='o', linestyle='--')
+    if group_same_model:
+        model_performances = defaultdict(list)
+        model_performances_train = defaultdict(list)
+        for model_name, perf, perf_train in zip(model_names, performances, performances_train):
+            model_performances[model_name].append(perf)
+            model_performances_train[model_name].append(perf_train)
+        mean = [np.mean(p) for m, p in model_performances.items()]
+        mean_train = [np.mean(p) for m, p in model_performances_train.items()]
+        std = [np.std(p) for m, p in model_performances.items()]
+        std_train = [np.std(p) for m, p in model_performances_train.items()]
+        
+        x = model_performances.keys()
+        
+        plt.errorbar(x, mean, yerr=std, label=f'test {metric.upper()}', marker='o', linestyle='--', capsize=3)
+        if show_train:
+            plt.errorbar(x, mean_train, yerr=std_train, label=f'train {metric.upper()}', 
+                         marker='o', linestyle='--', capsize=3)
+    else:
+        x_labels = [f'{model_name}/{train_name}' for model_name, train_name in zip(model_names, train_names)]
+        plt.plot(x_labels, performances, label=f'test {metric.upper()}', marker='o', linestyle='--')
+        if show_train:
+            plt.plot(x_labels, performances_train, label=f'train {metric.upper()}', marker='o', linestyle='--')
     
     fig.autofmt_xdate()
     plt.ylabel(metric.upper())
@@ -333,7 +388,8 @@ def plot_performance_per_sim(results_dir: str, model_names: str | list, train_na
     plt.grid(axis='y')
     
     
-def plot_performance_per_channel(results_dir: str, model_names: str | list, train_names: str | list, metric: str):
+def plot_performance_per_channel(results_dir: str, model_names: str | list, train_names: str | list, metric: str,
+                                 show_train: bool = False):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
@@ -345,6 +401,9 @@ def plot_performance_per_channel(results_dir: str, model_names: str | list, trai
             results = json.load(f)
         x = ['t', 'u', 'v', 'w']
         plt.plot(x, results[metric], label=f'{model_name}/{train_name}', marker='o')
+        if show_train:
+            plt.plot(x, results[f'{metric}_train'], label=f'{model_name}/{train_name} - train', marker='o')
+            
     
     plt.xticks(x)
     plt.ylabel(metric.upper())
@@ -354,7 +413,7 @@ def plot_performance_per_channel(results_dir: str, model_names: str | list, trai
     
     
 def plot_performance_per_height(results_dir: str, model_names: str | list, train_names: str | list, metric: str,
-                                channel: int = None):
+                                channel: int = None, show_train: bool = False):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
@@ -369,6 +428,13 @@ def plot_performance_per_height(results_dir: str, model_names: str | list, train
             plt.plot(results[f'{metric}_per_channel'][channel], label=f'{model_name}/{train_name}')
         else:
             plt.plot(results[metric], label=f'{model_name}/{train_name}')
+            
+        if show_train:
+            if channel is not None:
+                plt.plot(results[f'{metric}_train_per_channel'][channel], label=f'{model_name}/{train_name}')
+            else:
+                plt.plot(results[f'{metric}_train'], label=f'{model_name}/{train_name}')
+            
     
     plt.ylabel(metric.upper())
     plt.xlabel('height')
@@ -377,7 +443,8 @@ def plot_performance_per_height(results_dir: str, model_names: str | list, train
     
     
 def plot_performance_per_hp(trains_dir: str, results_dir: str, model_names: str | list, train_names: str | list, 
-                            metric: str, hp: str, x_label: str = None):
+                            metric: str, hp: str, x_label: str = None, rounding: int = None, show_train: bool = False,
+                            fill_error: bool = True):
     if type(model_names) == str: model_names = [model_names]
     if type(train_names) == str: train_names = [train_names]
     
@@ -389,22 +456,57 @@ def plot_performance_per_hp(trains_dir: str, results_dir: str, model_names: str 
     fig = plt.figure(figsize=(8, 5))
     
     for model_name, trainings in trainings_of_model.items():
-        hp_values = []
-        performances = []
+        performance_per_hp = defaultdict(lambda: ([], []))
         for train_name in trainings:
             results_file = os.path.join(results_dir, model_name, train_name, 'performance.json')
             with open(results_file, 'r') as f:
                 results = json.load(f)
-            performances.append(results[metric])
+            performance = results[metric]
+            performance_train = results[f'{metric}_train']
             
             hp_file = os.path.join(trains_dir, model_name, train_name, 'hyperparameters.json')
             with open(hp_file, 'r') as f:
                 hps = json.load(f)
-            hp_values.append(hps[hp])
+                
+            hp_value = hps[hp]
+            if rounding is not None:
+                hp_value = round(hp_value, rounding)
+                
+            performance_per_hp[hp_value][0].append(performance)
+            performance_per_hp[hp_value][1].append(performance_train)
         
-        # sort by hp value
-        hp_values, performances = zip(*sorted(zip(hp_values, performances)))
-        plt.plot(hp_values, performances, label=model_name, marker='o')
+        # sort by hp value and compute statistics
+        hp_values, mean, std, mean_train, std_train = [], [], [], [], []
+        error_bar = False
+        for hp_value in sorted(performance_per_hp.keys()):
+            hp_values.append(hp_value)
+            
+            performances, performances_train = performance_per_hp[hp_value]
+            if len(performances) > 1:
+                error_bar = True
+            mean.append(np.mean(performances))
+            std.append(np.std(performances))
+            mean_train.append(np.mean(performances_train))
+            std_train.append(np.std(performances_train))
+        
+        if error_bar:
+            ebar = plt.errorbar(hp_values, mean, yerr=std, capsize=3, marker='o', label=model_name)
+            if fill_error:
+                mean, std = np.array(mean), np.array(std) # to be able to substract these
+                plt.fill_between(hp_values, mean-std, mean+std, color=ebar.lines[0].get_color(), alpha=0.2)
+            
+            if show_train:
+                ebar = plt.errorbar(hp_values, mean_train, yerr=std_train, capsize=3, marker='o', 
+                                    label=f'{model_name} - train')
+                if fill_error:
+                    mean_train, std_train = np.array(mean_train), np.array(std_train) # to be able to substract these
+                    plt.fill_between(hp_values, mean_train-std_train, mean_train+std_train, 
+                                    color=ebar.lines[0].get_color(), alpha=0.2)
+        else:
+            plt.plot(hp_values, mean, marker='o', label=model_name)
+            if show_train:
+                plt.plot(hp_values, mean_train, marker='o', label=f'{model_name} - train')
+                
     
     if x_label is None: x_label = hp
     plt.ylabel(metric.upper())

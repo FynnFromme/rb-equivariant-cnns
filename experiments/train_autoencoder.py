@@ -252,7 +252,7 @@ else:
 
 training.train(model=model, models_dir=models_dir, model_name=model_name, train_name=train_name, start_epoch=loaded_epoch, 
                epochs=EPOCHS, train_loader=train_loader, valid_loader=valid_loader, loss_fn=loss_fn, 
-               optimizer=optimizer, lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, train_samples=N_TRAIN, 
+               optimizer=optimizer, lr_scheduler=lr_scheduler, use_lr_scheduler=USE_LR_SCHEDULER, early_stopping=EARLY_STOPPING, only_save_best=args.only_save_best, train_samples=train_dataset.num_samples, 
                batch_size=BATCH_SIZE, data_augmentation=data_augmentation, plot=False, 
                initial_early_stop_count=initial_early_stop_count, train_loss_in_eval=args.train_loss_in_eval,
                early_stopping_threshold=EARLY_STOPPING_THRESHOLD)
