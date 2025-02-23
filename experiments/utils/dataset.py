@@ -55,7 +55,11 @@ class RBDataset(IterableDataset):
 
             for i in indices:
                 # (snap, snap) pairs for autoencoder
-                snap = snapshots[i]
+                if dataset_includes_data_aug(snapshots):
+                    aug = random.randint(0, num_augmentations_in_ds(snapshots)-1) # select random data aug
+                    snap = snapshots[aug, i]
+                else:
+                    snap = snapshots[i]
                 snap = torch.Tensor(snap)
                 
                 if self.device is not None:
@@ -153,8 +157,21 @@ class RBForecastDataset(RBDataset):
 
             for i in indices:
                 # (warmup_seq, forecast_seq) pairs for training a forecasting model
-                x = snapshots[i-self.warmup_seq_length:i]
-                y = snapshots[i-self.warmup_seq_length+1:i+self.forecast_seq_length] if self.forecast_warmup else snapshots[i:i+self.forecast_seq_length]
+                
+                if dataset_includes_data_aug(snapshots):
+                    # select random data aug
+                    aug = random.randint(0, num_augmentations_in_ds(snapshots)-1)
+                    x = snapshots[aug, i-self.warmup_seq_length:i]
+                    if self.forecast_warmup:
+                        y = snapshots[aug, i-self.warmup_seq_length+1:i+self.forecast_seq_length]  
+                    else:
+                        y = snapshots[aug, i:i+self.forecast_seq_length]
+                else:
+                    x = snapshots[i-self.warmup_seq_length:i]
+                    if self.forecast_warmup:
+                        y = snapshots[i-self.warmup_seq_length+1:i+self.forecast_seq_length]  
+                    else:
+                        y = snapshots[i:i+self.forecast_seq_length]
                 
                 x = torch.Tensor(x)
                 y = torch.Tensor(y)
@@ -197,8 +214,14 @@ def num_samples(sim_file: str, datasets: str | list[str]) -> int:
     if single_dataset:
         datasets = [datasets]
         
+    samples = []
     with h5py.File(sim_file, 'r') as hf:
-        samples = [hf[dataset].shape[0] for dataset in datasets]
+        for dataset in datasets:
+            if dataset_includes_data_aug(hf[dataset]):
+                # ignore data augmentation dimension
+                samples.append(hf[dataset][0].shape[0])
+            else:
+                samples.append(hf[dataset].shape[0])
         
     return samples[0] if single_dataset else samples
 
@@ -222,6 +245,17 @@ def standardization_params(sim_file: str) -> tuple[np.ndarray, np.ndarray]:
 
 def snapshot_shape(sim_file: str, dataset: str) -> tuple:
     with h5py.File(sim_file, 'r') as hf:
-        snapshot = hf[dataset][0]
+        if dataset_includes_data_aug(hf[dataset]):
+            # ignore data augmentation dimension
+            snapshot = hf[dataset][0,0]
+        else:
+            snapshot = hf[dataset][0]
     
     return snapshot.shape
+
+
+def dataset_includes_data_aug(dataset: h5py.Dataset) -> bool:
+    return 'augmentations' in dataset.attrs and dataset.attrs['augmentations'] > 1
+
+def num_augmentations_in_ds(dataset: h5py.Dataset) -> int:
+    return dataset.attrs['augmentations']

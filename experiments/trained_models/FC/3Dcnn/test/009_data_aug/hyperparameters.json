@@ -25,7 +25,7 @@
     "use_force_decoding": true,
     "backprop_through_autoregression": true,
     "batch_size": 64,
-    "n_train": 156960,
+    "n_train": 19620,
     "n_valid": 6540,
     "learning_rate": 0.001,
     "optimizer": "<class 'torch.optim.adam.Adam'>",
