@@ -130,7 +130,7 @@ def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int
 
 
 def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, samples: int = None, 
-                               save_dir: str = None, filename: str = None):
+                               save_dir: str = None, filename: str = None, parallel_channels: int = 1):
     dataloader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
 
     model.eval()
@@ -145,8 +145,8 @@ def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, sampl
             # Compute the Jacobian for the current batch
             channel_gradients = []
             num_channels = model.encode(batch).size(-1)
-            for channel in range(1, num_channels, 2):
-                end_channel = min(channel+2, num_channels)
+            for channel in range(1, num_channels, parallel_channels):
+                end_channel = min(channel+parallel_channels, num_channels)
                 jacobian_batch = torch.autograd.functional.jacobian(lambda x: model.encode(x)[..., channel:end_channel], 
                                                                     batch, vectorize=True)
                 channel_gradients.append(jacobian_batch) # of shape (b,lw,ld,lh,lc,b,w,d,h,c) - l stands for latent

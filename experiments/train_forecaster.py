@@ -131,7 +131,13 @@ if not args.loss_on_decoded:
         autoencoder = build_and_load_trained_model(models_dir, os.path.join('AE', args.ae_model_name), args.ae_train_name)
         autoencoder.to(DEVICE)
         print('Precompute latent dataset')
-        compute_latent_dataset(autoencoder, latent_file, sim_file, device=DEVICE, batch_size=args.batch_size)
+        
+        # data augmentation is already included in the dataset itself since transformation laws do not apply
+        # on latent space for non-equivariant models
+        latent_data_aug = DataAugmentation(in_height=autoencoder.in_dims[-1], gspace=gspaces.flipRot2dOnR2(N=4))
+        
+        compute_latent_dataset(autoencoder, latent_file, sim_file, device=DEVICE, batch_size=args.batch_size,
+                               data_augmentation=latent_data_aug)
         del autoencoder
     sim_file = latent_file
 
@@ -240,19 +246,12 @@ loss_fn = torch.nn.MSELoss()
 
 trainable_parameters = model.parameters()
 optimizer = OPTIMIZER(trainable_parameters, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-# data augmentation only by 90° rotations for efficiency reasons
+
 if args.loss_on_decoded:
     data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4))
 else:
-    if isinstance(model, enn.EquivariantModule):
-        # TODO fix: will cause errors if model.gspace != gspace
-        data_augmentation = DataAugmentation(in_height=model.in_height, gspace=gspaces.flipRot2dOnR2(N=4), 
-                                            latent=True, latent_channels=model.latent_channels, model_gspace=model.gspace)
-    else:
-        # No DataAugmentation of latent spaces for non-equivariant models
-        # as a rotation in the original input wouldn't result in a rotation
-        # of the latent space
-        data_augmentation = None
+    # data augmentation is already included in the latent dataset
+    data_augmentation = None
 
 
 START_EPOCH = args.start_epoch # loads pretrained model if greater 0, loads last available epoch for -1

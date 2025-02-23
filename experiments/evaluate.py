@@ -48,6 +48,8 @@ parser.add_argument('-compute_latent_sensitivity', action='store_true', default=
 parser.add_argument('-autoregressive_confidence_interval', type=float, default=0.95)
 parser.add_argument('-animation_samples', type=int, default=np.inf)
 parser.add_argument('-latent_sensitivity_samples', type=int, default=-1)
+ # the number of channels in latent space to compute sensitivty in parallel for
+parser.add_argument('-parallel_channels_latent_sensitivity', type=int, default=1)
 parser.add_argument('-simulation_name', type=str, default='x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
 parser.add_argument('-n_test', type=int, default=-1)
 parser.add_argument('-n_train', type=int, default=-1)
@@ -398,7 +400,6 @@ if args.compute_latent_sensitivity:
         else:
             samles = sensitivity_dataset.num_samples
         
-        avg_sensitivity, avg_abs_sensitivity = compute_latent_sensitivity(model, sensitivity_dataset, 
-                                                                          samples=samples, 
-                                                                          save_dir=results_dir,
-                                                                          filename='latent_sensitivity')
+        avg_sensitivity, avg_abs_sensitivity = compute_latent_sensitivity(
+            model, sensitivity_dataset, samples=samples, save_dir=results_dir,
+            filename='latent_sensitivity', parallel_channels=args.parallel_channels_latent_sensitivity)

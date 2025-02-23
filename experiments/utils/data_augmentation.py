@@ -5,22 +5,15 @@ from escnn.group import GroupElement
 from torch import Tensor
 
 class DataAugmentation:
-    def __init__(self, in_height: int, gspace: GSpace = gspaces.flipRot2dOnR2(N=4), latent: bool = False,
-                 latent_channels: int = None, model_gspace: GSpace = None):
+    def __init__(self, in_height: int, gspace: GSpace = gspaces.flipRot2dOnR2(N=4)):
         self.gspace = gspace
         
         da_irrep_frequencies = (1, 1) if gspace.flips_order > 0 else (1,) 
-        if latent:
-            if model_gspace:
-                #! will cause errors if model_gspace != gspace
-                self.data_aug_type = enn.FieldType(gspace, in_height*latent_channels*[model_gspace.regular_repr])
-            else:
-                self.data_aug_type = enn.FieldType(gspace, in_height*latent_channels*[gspace.trivial_repr])
-        else:
-            self.data_aug_type = enn.FieldType(gspace, 
-                                            in_height*[gspace.trivial_repr, 
-                                                        gspace.irrep(*da_irrep_frequencies), 
-                                                        gspace.trivial_repr])
+        
+        self.data_aug_type = enn.FieldType(gspace, 
+                                        in_height*[gspace.trivial_repr, 
+                                                    gspace.irrep(*da_irrep_frequencies), 
+                                                    gspace.trivial_repr])
         
     def __call__(self, *inputs: list[Tensor]) -> Tensor:
         if len(inputs) == 0: return None
@@ -53,6 +46,9 @@ class DataAugmentation:
         
         transformed_input = _to_original_shape(transformed_input)
         return transformed_input
+    
+    def get_transformations(self) -> list[GroupElement]:
+        return list(self.gspace.testing_elements)
 
 
 def _to_da_shape(tensor: Tensor) -> Tensor:
