@@ -19,7 +19,8 @@ class RBDataset(IterableDataset):
                  samples: int = -1,
                  shuffle: bool = True,
                  slice_start: int = 0,
-                 slice_end: int = -1):
+                 slice_end: int = -1,
+                 data_aug: bool = False): # data augmentation only supported when present in the dataset
         super().__init__()
         
         self.sim_file = sim_file
@@ -29,6 +30,11 @@ class RBDataset(IterableDataset):
         self.shuffle = shuffle
         self.slice_start = slice_start
         self.slice_end = slice_end
+        
+        self.data_aug = data_aug
+        if data_aug:
+            assert dataset_includes_data_aug(sim_file, dataset)
+            self.num_augmentations = num_augmentations_in_ds(sim_file, dataset)
         
         self.mean, self.std = standardization_params(sim_file)
         self.snapshot_shape = snapshot_shape(sim_file, dataset)
@@ -55,8 +61,8 @@ class RBDataset(IterableDataset):
 
             for i in indices:
                 # (snap, snap) pairs for autoencoder
-                if dataset_includes_data_aug(snapshots):
-                    aug = random.randint(0, num_augmentations_in_ds(snapshots)-1) # select random data aug
+                if self.data_aug:
+                    aug = random.randint(0, self.num_augmentations-1) # select random data aug
                     snap = snapshots[aug, i]
                 else:
                     snap = snapshots[i]
@@ -74,8 +80,8 @@ class RBDataset(IterableDataset):
         sim_end_indices = range(self.snaps_per_sim, self.snaps_in_dataset+1, self.snaps_per_sim)
         
         for start, end in zip(sim_start_indices, sim_end_indices):
-            yield RBDataset(self.sim_file, self.dataset, self.device, samples=-1,
-                             shuffle=self.shuffle, slice_start=start, slice_end=end)
+            yield RBDataset(self.sim_file, self.dataset, self.device, samples=-1, shuffle=self.shuffle, 
+                            slice_start=start, slice_end=end, data_aug=self.data_aug)
     
                 
     def standardize_batch(self, batch: Tensor) -> Tensor:
@@ -130,9 +136,10 @@ class RBForecastDataset(RBDataset):
                  shuffle: bool = True,
                  slice_start: int = 0,
                  slice_end: int = -1,
+                 data_aug: bool = False,  # data augmentation only supported when present in the dataset
                  *args, **kwargs):
         super().__init__(sim_file=sim_file, dataset=dataset, device=device, samples=samples, shuffle=shuffle, 
-                         slice_start=slice_start, slice_end=slice_end, *args, **kwargs)
+                         slice_start=slice_start, slice_end=slice_end, data_aug=data_aug, *args, **kwargs)
         
         self.warmup_seq_length = warmup_seq_length
         self.forecast_seq_length = forecast_seq_length
@@ -158,9 +165,9 @@ class RBForecastDataset(RBDataset):
             for i in indices:
                 # (warmup_seq, forecast_seq) pairs for training a forecasting model
                 
-                if dataset_includes_data_aug(snapshots):
+                if self.data_aug:
                     # select random data aug
-                    aug = random.randint(0, num_augmentations_in_ds(snapshots)-1)
+                    aug = random.randint(0, self.num_augmentations-1)
                     x = snapshots[aug, i-self.warmup_seq_length:i]
                     if self.forecast_warmup:
                         y = snapshots[aug, i-self.warmup_seq_length+1:i+self.forecast_seq_length]  
@@ -205,7 +212,7 @@ class RBForecastDataset(RBDataset):
         for start, end in zip(sim_start_indices, sim_end_indices):
             yield RBForecastDataset(self.sim_file, self.dataset, self.warmup_seq_length, self.forecast_seq_length, 
                                     self.forecast_warmup, self.device, samples=-1, shuffle=self.shuffle, 
-                                    slice_start=start, slice_end=end)
+                                    slice_start=start, slice_end=end, data_aug=self.data_aug)
 
 
 
@@ -217,7 +224,7 @@ def num_samples(sim_file: str, datasets: str | list[str]) -> int:
     samples = []
     with h5py.File(sim_file, 'r') as hf:
         for dataset in datasets:
-            if dataset_includes_data_aug(hf[dataset]):
+            if dataset_includes_data_aug(sim_file, dataset):
                 # ignore data augmentation dimension
                 samples.append(hf[dataset][0].shape[0])
             else:
@@ -245,7 +252,7 @@ def standardization_params(sim_file: str) -> tuple[np.ndarray, np.ndarray]:
 
 def snapshot_shape(sim_file: str, dataset: str) -> tuple:
     with h5py.File(sim_file, 'r') as hf:
-        if dataset_includes_data_aug(hf[dataset]):
+        if dataset_includes_data_aug(sim_file, dataset):
             # ignore data augmentation dimension
             snapshot = hf[dataset][0,0]
         else:
@@ -254,8 +261,12 @@ def snapshot_shape(sim_file: str, dataset: str) -> tuple:
     return snapshot.shape
 
 
-def dataset_includes_data_aug(dataset: h5py.Dataset) -> bool:
-    return 'augmentations' in dataset.attrs and dataset.attrs['augmentations'] > 1
+def dataset_includes_data_aug(sim_file: str, dataset: str) -> bool:
+    with h5py.File(sim_file, 'r') as hf:
+        ds = hf[dataset]
+        return 'augmentations' in ds.attrs and ds.attrs['augmentations'] > 1
 
-def num_augmentations_in_ds(dataset: h5py.Dataset) -> int:
-    return dataset.attrs['augmentations']
+def num_augmentations_in_ds(sim_file: str, dataset: str) -> int:
+    with h5py.File(sim_file, 'r') as hf:
+        ds = hf[dataset]
+        return ds.attrs['augmentations']

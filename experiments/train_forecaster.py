@@ -142,7 +142,7 @@ if not args.loss_on_decoded:
     sim_file = latent_file
 
 train_dataset = dataset.RBForecastDataset(sim_file, 'train', device=DEVICE, shuffle=True, samples=args.n_train, warmup_seq_length=args.warmup_seq_length, 
-                                          forecast_seq_length=args.forecast_seq_length)
+                                          forecast_seq_length=args.forecast_seq_length, data_aug=True)
 valid_dataset = dataset.RBForecastDataset(sim_file, 'valid', device=DEVICE, shuffle=True, samples=args.n_valid, warmup_seq_length=args.warmup_seq_length, 
                                           forecast_seq_length=args.forecast_seq_length)
 
