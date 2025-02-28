@@ -13,7 +13,6 @@ from experiments.utils.model_building import build_forecaster, build_and_load_tr
 from utils import training
 
 from escnn import gspaces
-from escnn import nn as enn
 
 from argparse import ArgumentParser, ArgumentTypeError
 
@@ -50,13 +49,13 @@ parser.add_argument('-n_valid', type=int, default=-1)
 parser.add_argument('-batch_size', type=int, default=64)
 
 # model hyperparameters
-parser.add_argument('-flips', type=bool, default=True)
+parser.add_argument('-flips', type=str2bool, default=True)
 parser.add_argument('-rots', type=int, default=4)
 parser.add_argument('-v_kernel_size', type=int, default=3)
 parser.add_argument('-h_kernel_size', type=int, default=3)
 parser.add_argument('-drop_rate', type=float, default=0.2)
 parser.add_argument('-recurrent_drop_rate', type=float, default=0)
-parser.add_argument('-nonlinearity', type=str, default='tanh', choices=['tanh', 'ReLU'])
+parser.add_argument('-nonlinearity', type=str, default='tanh', choices=['tanh', 'ReLU', 'ELU'])
 parser.add_argument('-lstm_channels', nargs='+', type=int, default=None)
 parser.add_argument('-weight_decay', type=float, default=0)
 parser.add_argument('-residual_connection', type=str2bool, default=True)
@@ -70,8 +69,8 @@ parser.add_argument('-loss_on_decoded', action='store_true', default=False)
 parser.add_argument('-init_forced_decoding_prob', type=float, default=1)
 parser.add_argument('-min_forced_decoding_prob', type=float, default=0)
 parser.add_argument('-forced_decoding_epochs', type=int, default=100)
-parser.add_argument('-use_force_decoding', type=bool, default=True)
-parser.add_argument('-backprop_through_autoregression', type=bool, default=True)
+parser.add_argument('-use_force_decoding', type=str2bool, default=True)
+parser.add_argument('-backprop_through_autoregression', type=str2bool, default=True)
 
 parser.add_argument('-train_autoencoder', action='store_true', default=False)
 parser.add_argument('-lr', type=float, default=1e-3)

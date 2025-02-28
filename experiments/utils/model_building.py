@@ -31,11 +31,13 @@ steerable_nonlinearity_mapping_ae = {
 }
 
 nonlinearity_mapping_fc = {
+    "ELU": torch.nn.functional.elu,
     "ReLU": torch.relu,
     "tanh": torch.tanh
 }
 
 steerable_nonlinearity_mapping_fc = {
+    "ELU": "elu",
     "ReLU": "relu",
     "tanh": "tanh"
 }
