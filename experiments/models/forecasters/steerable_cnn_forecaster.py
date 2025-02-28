@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import random
 
 from escnn import nn as enn
 from escnn.nn import GeometricTensor
@@ -11,10 +12,8 @@ from layers.lstm.steerable_conv_lstm import RBSteerableConvLSTM
 from experiments.models import model_utils
 from collections import OrderedDict
 from typing import Literal, Any
-import itertools
 
 #! TODO LayerNorm?
-#! parameter initialization
 class RBSteerableForecaster(enn.EquivariantModule):
     def __init__(
         self,
@@ -33,6 +32,10 @@ class RBSteerableForecaster(enn.EquivariantModule):
         recurrent_drop_rate: float = 0,
         parallel_ops: bool = True, # applies autoencoder and output layer in parallel (might result in out of memory for large sequences)
         train_autoencoder: bool = False,
+        min_forced_decoding_prob: float = 0,
+        init_forced_decoding_prob: float = 1,
+        forced_decoding_epochs: float = 100,
+        backprop_through_autoregression: bool = True,
         **kwargs
     ):
         super().__init__()
@@ -46,9 +49,15 @@ class RBSteerableForecaster(enn.EquivariantModule):
         self.latent_dims = latent_dims
         self.residual_connection = residual_connection
         
+        self.backprop_through_autoregression = backprop_through_autoregression
+        
         self.autoencoder = autoencoder
         self.parallel_ops = parallel_ops
         self.train_autoencoder = train_autoencoder
+        
+        self.min_forced_decoding_prob = min_forced_decoding_prob
+        self.init_forced_decoding_prob = init_forced_decoding_prob
+        self.forced_decoding_epochs = forced_decoding_epochs
         
         self.field_type = [gspace.regular_repr]
         
@@ -108,7 +117,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
         self.in_latent_height, self.out_latent_height = first_lstm.in_height, self.output_conv.out_height
             
         
-    def forward(self, warmup_input, steps=1):
+    def forward(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
         # input shape [batch, seq, width, depth, height, channels]
         
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
@@ -123,7 +132,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
             warmup_latent = warmup_input
         
         
-        output_latent = self.forward_latent(warmup_latent, steps)
+        output_latent = self.forward_latent(warmup_latent, steps, ground_truth, epoch)
 
         if self.autoencoder is not None:
             # decode into original space
@@ -133,7 +142,7 @@ class RBSteerableForecaster(enn.EquivariantModule):
         
         return output
     
-    def forward_latent(self, warmup_input: torch.Tensor, steps=1):
+    def forward_latent(self, warmup_input: torch.Tensor, steps=1, ground_truth=None, epoch=-1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         
@@ -141,17 +150,25 @@ class RBSteerableForecaster(enn.EquivariantModule):
         assert tuple(dims) == tuple(self.latent_dims)
         
         warmup_input = self._from_input_shape(warmup_input)
-        warmup_length = warmup_input.shape[1]
+        warmup_length = warmup_input.size(1)
         geom_warmup_input = [GeometricTensor(warmup_input[:, t], self.lstm_decoder.in_type) for t in range(warmup_length)]
         
-        geom_outputs = self._forward_geometric_latent(geom_warmup_input, steps)
+        if ground_truth is not None:
+            ground_truth = self._from_input_shape(ground_truth)
+            ground_truth_lenth = ground_truth.size(1)
+            assert ground_truth_lenth == steps
+            geom_ground_truth = [GeometricTensor(ground_truth[:, t], self.lstm_decoder.in_type) for t in range(steps)]
+        else:
+            geom_ground_truth = None
+        
+        geom_outputs = self._forward_geometric_latent(geom_warmup_input, steps, geom_ground_truth, epoch)
             
         output = torch.stack([geom_tensor.tensor for geom_tensor in geom_outputs], dim=1)
         
         output = self._to_output_shape(output)
         return output
     
-    def _forward_geometric_latent(self, warmup_input: list[GeometricTensor], steps=1):
+    def _forward_geometric_latent(self, warmup_input: list[GeometricTensor], steps=1, ground_truth=None, epoch=-1):
         if self.use_lstm_encoder:
             _, encoded_state = self.lstm_encoder.forward(warmup_input)
             decoder_input = [warmup_input[-1]]
@@ -173,9 +190,24 @@ class RBSteerableForecaster(enn.EquivariantModule):
                 else:
                     res_input = lstm_input
                 out = [res + o for res, o in zip(res_input, out)]
+                
+            
+            if self.training and ground_truth is not None and epoch >= 0:
+                forced_decoding_prob = max(self.min_forced_decoding_prob, 
+                                           self.init_forced_decoding_prob * (1 - (epoch-1)/self.forced_decoding_epochs))
+            else:
+                forced_decoding_prob = 0
+            forced_decoding = random.random() < forced_decoding_prob
+
+            if forced_decoding:
+                lstm_input = [ground_truth[i]]
+            else:
+                lstm_input = [out[-1]]
+                if not self.backprop_through_autoregression:
+                    for inp in lstm_input:
+                        inp.tensor = inp.tensor.detach()
             
             outputs.extend(out)
-            lstm_input = [out[-1]]
             
         return outputs
     

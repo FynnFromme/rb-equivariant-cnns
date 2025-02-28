@@ -10,7 +10,6 @@ from collections import OrderedDict
 import random
 
 #! TODO LayerNorm?
-#! parameter initialization
 class RB3DForecaster(Module):
     def __init__(
         self,
@@ -134,13 +133,11 @@ class RB3DForecaster(Module):
         
         if ground_truth is not None:
             ground_truth = self._from_input_shape(ground_truth)
+            assert ground_truth.size(1) == steps
         
         input_channels, *dims = warmup_input.shape[2:]
         assert input_channels == self.latent_channels
         assert tuple(dims) == tuple(self.latent_dims)
-        
-        if ground_truth is not None:
-            assert ground_truth.size(1) == steps
         
         if self.use_lstm_encoder:
             _, encoded_state = self.lstm_encoder.forward(warmup_input)
