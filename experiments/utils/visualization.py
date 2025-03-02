@@ -1,4 +1,4 @@
-from .dataset import RBDataset, num_samples
+from .dataset import RBDataset, RBForecastDataset, num_samples, num_samples_per_sim
 
 import math
 import random
@@ -20,43 +20,44 @@ import os
 import json
 
 
-def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, dataset: RBDataset):
+def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, dataset: RBDataset,
+                     model_forward_kwargs: dict = {}):
     """Calculates the models output of a batch of raw simulation data."""
     
-    for (inputs, _) in data_loader:
+    for (inputs, ground_truth) in data_loader:
         # predict
         model.eval()
-        preds = model(inputs)
+        preds = model(inputs, **model_forward_kwargs)
         
-        inputs_stand = inputs.cpu().detach().numpy()
+        ground_truth_stand = ground_truth.cpu().detach().numpy()
         preds_stand = preds.cpu().detach().numpy()
         
         # remove standardization
-        inputs = dataset.de_standardize_batch(inputs_stand)
+        ground_truth = dataset.de_standardize_batch(ground_truth_stand)
         preds = dataset.de_standardize_batch(preds_stand)
         
-        yield inputs, preds, inputs_stand, preds_stand
+        yield ground_truth, preds, ground_truth_stand, preds_stand
 
 
-def rb_model_animation(model: torch.nn.Module, 
-                       axis: int,
-                       anim_dir: str, 
-                       anim_name: str, 
-                       slice: int, 
-                       fps: int, 
-                       sim_file: str, 
-                       device: str,
-                       feature: Literal['t', 'u', 'v', 'w'],
-                       dataset_name='test', 
-                       batch_size=32,
-                       frames=np.inf):
+def rb_autoencoder_animation(model: torch.nn.Module, 
+                             axis: int,
+                             anim_dir: str, 
+                             anim_name: str, 
+                             slice: int, 
+                             fps: int, 
+                             sim_file: str, 
+                             device: str,
+                             feature: Literal['t', 'u', 'v', 'w'],
+                             dataset_name='test', 
+                             batch_size=32,
+                             frames=np.inf):
     channel = ['t', 'u', 'v', 'w'].index(feature)
     
     dataset = RBDataset(sim_file, dataset_name, device, shuffle=False)
     data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=False)
     
     predicted_batches_gen = _predict_batches(model, data_loader, dataset)
-    batch_x, batch_y, batch_x_stand, batch_y_stand = next(predicted_batches_gen)
+    batch_y, batch_pred, batch_y_stand, batch_pred_stand = next(predicted_batches_gen)
     in_batch_frame = 0
 
     # prepare plot
@@ -70,22 +71,22 @@ def rb_model_animation(model: torch.nn.Module,
     
     # initialize input snapshot
     ax = plt.subplot(1,3,1)
-    orig_data = np.rot90(batch_x[0, :, :, :, channel].take(indices=slice, axis=axis))
+    orig_data = np.rot90(batch_y[0, :, :, :, channel].take(indices=slice, axis=axis))
     orig_im = plt.imshow(orig_data, cmap='rainbow', extent=img_extent)
     plt.axis('off')
     ax.set_title('input')
 
     # initialize output snapshot
     ax = plt.subplot(1,3,2)
-    pred_data = np.rot90(batch_y[0, :, :, :, channel].take(indices=slice, axis=axis))
+    pred_data = np.rot90(batch_pred[0, :, :, :, channel].take(indices=slice, axis=axis))
     pred_im = plt.imshow(pred_data, cmap='rainbow', extent=img_extent)
     plt.axis('off')
     ax.set_title('output')
     
     # initialize diff snapshot
     ax = plt.subplot(1,3,3)
-    orig_data_stand = np.rot90(batch_x_stand[0, :, :, :, channel].take(indices=slice, axis=axis))
-    pred_data_stand = np.rot90(batch_y_stand[0, :, :, :, channel].take(indices=slice, axis=axis))
+    orig_data_stand = np.rot90(batch_y_stand[0, :, :, :, channel].take(indices=slice, axis=axis))
+    pred_data_stand = np.rot90(batch_pred_stand[0, :, :, :, channel].take(indices=slice, axis=axis))
     diff_im = plt.imshow(pred_data_stand-orig_data_stand, cmap='RdBu_r', extent=img_extent)
     plt.axis('off')
     ax.set_title('difference')
@@ -97,7 +98,7 @@ def rb_model_animation(model: torch.nn.Module,
     last_frame = 0
     def frame_updater(frame):
         """Computes the next frame of the animation."""
-        nonlocal batch_x, batch_y, batch_x_stand, batch_y_stand, in_batch_frame, last_frame
+        nonlocal batch_y, batch_pred, batch_y_stand, batch_pred_stand, in_batch_frame, last_frame
         if frame <= last_frame:
             # no new frame
             return orig_im, pred_im
@@ -107,16 +108,18 @@ def rb_model_animation(model: torch.nn.Module,
 
         if in_batch_frame >= batch_size:
             in_batch_frame = 0
-            batch_x, batch_y, batch_x_stand, batch_y_stand = next(predicted_batches_gen)
+            batch_y, batch_pred, batch_y_stand, batch_pred_stand = next(predicted_batches_gen)
         
         # update frames
-        orig_data = np.rot90(batch_x[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
-        pred_data = np.rot90(batch_y[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
-        orig_data_stand = np.rot90(batch_x_stand[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
-        pred_data_stand = np.rot90(batch_y_stand[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        orig_data = np.rot90(batch_y[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        pred_data = np.rot90(batch_pred[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        orig_data_stand = np.rot90(batch_y_stand[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        pred_data_stand = np.rot90(batch_pred_stand[in_batch_frame, :, :, :, channel].take(indices=slice, axis=axis))
         orig_im.set_array(orig_data)
         pred_im.set_array(pred_data)
         diff_im.set_array(pred_data_stand-orig_data_stand)
+        
+        plt.suptitle(f'Simulation {frame//dataset.snaps_per_sim + 1}')
         
         # update color map limits
         vmin = min(np.min(orig_data), np.min(pred_data))
@@ -127,6 +130,120 @@ def rb_model_animation(model: torch.nn.Module,
         return orig_im, pred_im
     
     frames = min(num_samples(sim_file, dataset_name), frames)
+    anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
+    
+    os.makedirs(anim_dir, exist_ok=True)
+    anim.save(os.path.join(anim_dir, anim_name))
+    plt.close()
+    
+    
+def rb_forecaster_animation(model: torch.nn.Module, 
+                       axis: int,
+                       anim_dir: str, 
+                       anim_name: str, 
+                       slice: int, 
+                       fps: int, 
+                       sim_file: str, 
+                       warmup_seq_length: int,
+                       device: str,
+                       feature: Literal['t', 'u', 'v', 'w'],
+                       dataset_name='test', 
+                       frames=np.inf):
+    channel = ['t', 'u', 'v', 'w'].index(feature)
+    
+    # dataset that includes one forecast sample per simulation
+    snaps_per_sim = num_samples_per_sim(sim_file, dataset_name)
+    forecast_steps = snaps_per_sim - warmup_seq_length
+    dataset = RBForecastDataset(sim_file, dataset_name, device=device, shuffle=False, 
+                                warmup_seq_length=warmup_seq_length, 
+                                forecast_seq_length=forecast_steps)
+    data_loader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
+    
+    model_forward_kwargs = {'steps': forecast_steps}
+    predicted_forecast_gen = _predict_batches(model, data_loader, dataset, model_forward_kwargs)
+    y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
+    forecast_frame = 0
+
+    # prepare plot
+    if axis == 2:
+        # is square when looking from above
+        img_extent = [0, 2*np.pi, 0, 2*np.pi]
+    else:
+        img_extent = [0, 2*np.pi, 0, 2]
+        
+    fig = plt.figure()
+    
+    # initialize input snapshot
+    ax = plt.subplot(1,3,1)
+    orig_data = np.rot90(y[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
+    orig_im = plt.imshow(orig_data, cmap='rainbow', extent=img_extent)
+    plt.axis('off')
+    ax.set_title('ground truth')
+
+    # initialize output snapshot
+    ax = plt.subplot(1,3,2)
+    pred_data = np.rot90(forecast[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
+    pred_im = plt.imshow(pred_data, cmap='rainbow', extent=img_extent)
+    plt.axis('off')
+    ax.set_title('forecast')
+    
+    # initialize diff snapshot
+    ax = plt.subplot(1,3,3)
+    # orig_data_stand = np.rot90(y_stand[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
+    # pred_data_stand = np.rot90(forecast_stand[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
+    diff_im = plt.imshow(pred_data-orig_data, cmap='RdBu_r', extent=img_extent)
+    plt.axis('off')
+    ax.set_title('difference')
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes('right', size='5%', pad=0.05)
+    fig.colorbar(diff_im, cax=cax, orientation='vertical')
+    
+    # set color map limits
+    vmin = min(np.min(y[..., channel]), np.min(forecast[..., channel]))
+    vmax = max(np.max(y[..., channel]), np.max(forecast[..., channel]))
+    max_diff = np.max(np.abs(y[..., channel]-forecast[..., channel]))
+    orig_im.set_clim(vmin=vmin, vmax=vmax)
+    pred_im.set_clim(vmin=vmin, vmax=vmax)
+    diff_im.set_clim(vmin=-max_diff, vmax=max_diff)
+
+    last_frame = 0
+    sim = 1
+    def frame_updater(frame):
+        """Computes the next frame of the animation."""
+        nonlocal y, forecast, y_stand, forecast_stand, forecast_frame, last_frame, sim
+        if frame <= last_frame:
+            # no new frame
+            return orig_im, pred_im
+        
+        forecast_frame += 1
+        last_frame = frame
+
+        if forecast_frame >= forecast_steps:
+            forecast_frame = 0
+            y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
+            sim += 1
+            # update color map limits
+            vmin = min(np.min(y[..., channel]), np.min(forecast[..., channel]))
+            vmax = max(np.max(y[..., channel]), np.max(forecast[..., channel]))
+            max_diff = np.max(np.abs(y[..., channel]-forecast[..., channel]))
+            orig_im.set_clim(vmin=vmin, vmax=vmax)
+            pred_im.set_clim(vmin=vmin, vmax=vmax)
+            diff_im.set_clim(vmin=-max_diff, vmax=max_diff)
+        
+        # update frames
+        orig_data = np.rot90(y[0, forecast_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        pred_data = np.rot90(forecast[0, forecast_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        orig_im.set_array(orig_data)
+        pred_im.set_array(pred_data)
+        diff_im.set_array(orig_data-pred_data)
+        
+        plt.suptitle(f'Simulation {sim} - {forecast_frame+1} autoregressive steps')
+        
+        
+        
+        return orig_im, pred_im
+    
+    frames = dataset.num_samples * dataset.forecast_seq_length
     anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
     
     os.makedirs(anim_dir, exist_ok=True)
@@ -248,7 +365,6 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
             plt.plot(x, valid_loss, label=f'{model_name}/{train_name} - valid', color=color) 
         valid_losses.append(log['valid_loss'])
         
-    
     if two_plots:
         ax = plt.subplot(1, 2, 1)
         plt.title('Training Losses')
@@ -258,7 +374,8 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         plt.grid(True)
         plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
         plt.ylabel('loss (log-scale)' if log_scale else 'loss')
-        if remove_outliers: plt.ylim(top=_max_upper_bound(train_losses), 
+        if remove_outliers: plt.ylim(top=min(_max_upper_bound(train_losses),
+                                             plt.ylim()[1]), 
                                      bottom=max(plt.ylim()[0], 0))
         
         ax = plt.subplot(1, 2, 2)
@@ -269,7 +386,8 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         plt.grid(True)
         plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
         plt.ylabel('loss (log-scale)' if log_scale else 'loss')
-        if remove_outliers: plt.ylim(top=_max_upper_bound(valid_losses),
+        if remove_outliers: plt.ylim(top=min(_max_upper_bound(valid_losses),
+                                             plt.ylim()[1]),
                                      bottom=max(plt.ylim()[0], 0))
     else:
         plt.title('Losses During Training')
@@ -279,8 +397,9 @@ def plot_loss_history(model_dir: str, model_names: str | list, train_names: str 
         plt.grid(True)
         plt.xlabel('time (dd:hh:mm)' if time_x else 'epochs')
         plt.ylabel('loss (log-scale)' if log_scale else 'loss')
-        if remove_outliers: plt.ylim(top=max(_max_upper_bound(train_losses),
-                                             _max_upper_bound(valid_losses)),
+        if remove_outliers: plt.ylim(top=min(max(_max_upper_bound(train_losses),
+                                                _max_upper_bound(valid_losses)),
+                                             plt.ylim()[1]),
                                      bottom=max(plt.ylim()[0], 0))
     
     if time_x: fig.autofmt_xdate() # auto format

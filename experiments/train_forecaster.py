@@ -137,6 +137,7 @@ if not args.loss_on_decoded:
         
         compute_latent_dataset(autoencoder, latent_file, sim_file, device=DEVICE, batch_size=args.batch_size,
                                data_augmentation=latent_data_aug)
+        autoencoder.to('cpu') # required to fix device mismatch when loading autoencoder later again
         del autoencoder
     sim_file = latent_file
 

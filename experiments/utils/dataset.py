@@ -88,8 +88,6 @@ class RBDataset(IterableDataset):
         if self.mean is None or self.std is None:
             raise Exception('Dataset does not contain standardization parameters')
         
-        assert len(batch.shape) == 5
-        
         assert tuple(batch.shape[-4:]) == self.snapshot_shape
         
         return (batch-self.mean) / self.std
@@ -98,8 +96,6 @@ class RBDataset(IterableDataset):
     def de_standardize_batch(self, batch: Tensor) -> Tensor:
         if self.mean is None or self.std is None:
             raise Exception('Dataset does not contain standardization parameters')
-        
-        assert len(batch.shape) == 5
         
         assert tuple(batch.shape[-4:]) == self.snapshot_shape
         

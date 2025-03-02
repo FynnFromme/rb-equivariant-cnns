@@ -8,7 +8,7 @@ sys.path.append(os.path.join(EXPERIMENT_DIR, '..'))
 
 from utils import dataset
 from utils.evaluation import compute_loss, compute_loss_per_channel, compute_autoregressive_loss
-from utils.visualization import rb_model_animation
+from utils.visualization import rb_autoencoder_animation, rb_forecaster_animation
 from utils.evaluation import compute_latent_sensitivity
 from utils.model_building import build_and_load_trained_model
 from utils.latent_dataset import compute_latent_dataset
@@ -379,13 +379,23 @@ if args.animate:
     height = int(args.simulation_name.split('_')[2][1:])
     
     print('Animating...')
+    
     with tqdm(total=12, desc='animating', unit='animation') as pbar:
         for feature in ['t', 'u', 'v', 'w']:
             for axis, dim in enumerate(['width', 'depth', 'height']):
                 slice = height//2 if axis == 2 else horizontal_size//2
-                rb_model_animation(slice=slice, fps=25, frames=args.animation_samples, feature=feature, 
-                                    axis=axis, anim_dir=os.path.join(anim_dir, feature), anim_name=f'{dim}.mp4', 
-                                    model=model, sim_file=sim_file, device=DEVICE)
+                
+                if is_forecast_model:
+                    assert not args.loss_on_latent, 'animation is performed on original representation, set loss_on_latent to False'
+                    rb_forecaster_animation(slice=slice, fps=24, frames=args.animation_samples, feature=feature, 
+                                        axis=axis, anim_dir=os.path.join(anim_dir, feature), anim_name=f'{dim}.mp4', 
+                                        model=model, sim_file=sim_file, device=DEVICE,
+                                        warmup_seq_length=args.autoregressive_warmup_seq_length)
+                else:
+                    rb_autoencoder_animation(slice=slice, fps=24, frames=args.animation_samples, feature=feature, 
+                                        axis=axis, anim_dir=os.path.join(anim_dir, feature), anim_name=f'{dim}.mp4', 
+                                        model=model, sim_file=sim_file, device=DEVICE)
+                    
                 pbar.update(1)
 
 
