@@ -105,6 +105,9 @@ class RB3DForecaster(Module):
         # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
         # len(warmup_input) predictions wuring warmup rather than just the last one
         
+        # does not use the forward_gen generator in order to be able to apply the decoder in parallel to
+        # the whole sequence
+        
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
         
         # encode into latent space
@@ -126,7 +129,37 @@ class RB3DForecaster(Module):
         
         return output
     
-    def forward_latent(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
+    def forward_gen(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
+        # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
+        # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
+        # output_whole_warmup: by default only the states after the warmup are outputted. Set to True to output all 
+        # len(warmup_input) predictions wuring warmup rather than just the last one
+        
+        assert warmup_input.ndim==6, "warmup_input must be a sequence"
+        
+        # encode into latent space
+        if self.autoencoder is not None:
+            warmup_latent = self._encode_to_latent(warmup_input)
+        
+            if not self.train_autoencoder:
+                warmup_latent = warmup_latent.detach()
+        else:
+            warmup_latent = warmup_input
+            
+        for output_latent in self.forward_latent_gen(warmup_latent, steps, ground_truth, epoch):
+            # decode into original space
+            if self.autoencoder is not None:
+                output = self._decode_from_latent(output_latent)
+            else:
+                output = output_latent
+            
+            yield output
+    
+    def forward_latent(self, warmup_input: torch.Tensor, steps=1, ground_truth=None, epoch=-1):
+        outputs = list(self.forward_latent_gen(warmup_input, steps, ground_truth, epoch))
+        return torch.stack(outputs, dim=1)
+    
+    def forward_latent_gen(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         warmup_input = self._from_input_shape(warmup_input)
@@ -161,7 +194,8 @@ class RB3DForecaster(Module):
                     res_input = lstm_input
                 out = res_input + out
             
-            outputs.append(out)
+            for s in range(out.size(1)):
+                yield self._to_output_shape(out[:, s])
             
             if self.training and ground_truth is not None and epoch >= 0:
                 forced_decoding_prob = max(self.min_forced_decoding_prob, 
@@ -176,11 +210,6 @@ class RB3DForecaster(Module):
                 lstm_input = out[:, [-1]]
                 if not self.backprop_through_autoregression:
                     lstm_input = lstm_input.detach()
-
-        output = torch.cat(outputs, dim=1)
-            
-        output = self._to_output_shape(output)
-        return output
     
     def _apply_output_layer(self, lstm_out):  
         # shape: (b,seq,c,w,d,h)      
@@ -221,6 +250,9 @@ class RB3DForecaster(Module):
         return latent
     
     def _decode_from_latent(self, latent):
+        is_sequence = latent.ndim == 6
+        if not is_sequence:
+            latent = latent.unsqueeze(1)
         batch_size, seq_length = latent.shape[:2]
         
         if self.parallel_ops:
@@ -233,6 +265,9 @@ class RB3DForecaster(Module):
             for i in range(seq_length):
                 outputs.append(self.autoencoder.decode(latent[:, i]))
             output = torch.stack(outputs, dim=1)
+        
+        if not is_sequence:
+            output = output.squeeze(1)
         
         return output
         
@@ -259,7 +294,12 @@ class RB3DForecaster(Module):
         Returns:
             Tensor: Transformed tensor of shape [batch, sequence, width, depth, height, channels]
         """
-        return tensor.permute(0, 1, 3, 4, 5, 2)
+        if tensor.ndim == 6:
+            # is sequence
+            return tensor.permute(0, 1, 3, 4, 5, 2)
+        else:
+            # is a single snapshot
+            return tensor.permute(0, 2, 3, 4, 1)
     
     def summary(self):   
         # LSTM   

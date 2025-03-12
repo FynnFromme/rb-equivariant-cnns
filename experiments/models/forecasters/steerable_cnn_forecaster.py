@@ -120,6 +120,33 @@ class RBSteerableForecaster(enn.EquivariantModule):
     def forward(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
         # input shape [batch, seq, width, depth, height, channels]
         
+        # does not use the forward_gen generator in order to be able to apply the decoder in parallel to
+        # the whole sequence
+        
+        assert warmup_input.ndim==6, "warmup_input must be a sequence"
+
+        if self.autoencoder is not None:
+            # encode into latent space
+            warmup_latent = self._encode(warmup_input)
+            
+            if not self.train_autoencoder:
+                warmup_latent = warmup_latent.detach()
+        else:
+            warmup_latent = warmup_input
+        
+        output_latent = self.forward_latent(warmup_latent, steps, ground_truth, epoch)
+
+        if self.autoencoder is not None:
+            # decode into original space
+            output = self._decode(output_latent)
+        else:
+            output = output_latent
+        
+        return output
+    
+    def forward_gen(self, warmup_input, steps=1, ground_truth=None, epoch=-1):
+        # input shape [batch, seq, width, depth, height, channels]
+        
         assert warmup_input.ndim==6, "warmup_input must be a sequence"
 
         if self.autoencoder is not None:
@@ -132,17 +159,20 @@ class RBSteerableForecaster(enn.EquivariantModule):
             warmup_latent = warmup_input
         
         
-        output_latent = self.forward_latent(warmup_latent, steps, ground_truth, epoch)
-
-        if self.autoencoder is not None:
-            # decode into original space
-            output = self._decode(output_latent)
-        else:
-            output = output_latent
-        
-        return output
+        for output_latent in self.forward_latent_gen(warmup_latent, steps, ground_truth, epoch):
+            if self.autoencoder is not None:
+                # decode into original space
+                output = self._decode(output_latent)
+            else:
+                output = output_latent
+            
+            yield output
     
     def forward_latent(self, warmup_input: torch.Tensor, steps=1, ground_truth=None, epoch=-1):
+        outputs = list(self.forward_latent_gen(warmup_input, steps, ground_truth, epoch))
+        return torch.stack(outputs, dim=1)
+    
+    def forward_latent_gen(self, warmup_input: torch.Tensor, steps=1, ground_truth=None, epoch=-1):
         # input shape (b,warmup_seq,c,w,d,h) -> (b,forecast_seq,c,w,d,h) or (b,warmup_preds+forecast_seq,c,w,d,h)
         # 2 phases: warmup (lstm gets ground truth as input), autoregression: (lstm gets its own outputs as input, for steps > 1)
         
@@ -161,14 +191,10 @@ class RBSteerableForecaster(enn.EquivariantModule):
         else:
             geom_ground_truth = None
         
-        geom_outputs = self._forward_geometric_latent(geom_warmup_input, steps, geom_ground_truth, epoch)
-            
-        output = torch.stack([geom_tensor.tensor for geom_tensor in geom_outputs], dim=1)
-        
-        output = self._to_output_shape(output)
-        return output
+        for geom_output in self._forward_geometric_latent_gen(geom_warmup_input, steps, geom_ground_truth, epoch):
+            yield self._to_output_shape(geom_output.tensor)
     
-    def _forward_geometric_latent(self, warmup_input: list[GeometricTensor], steps=1, ground_truth=None, epoch=-1):
+    def _forward_geometric_latent_gen(self, warmup_input: list[GeometricTensor], steps=1, ground_truth=None, epoch=-1):
         if self.use_lstm_encoder:
             _, encoded_state = self.lstm_encoder.forward(warmup_input)
             decoder_input = [warmup_input[-1]]
@@ -179,7 +205,6 @@ class RBSteerableForecaster(enn.EquivariantModule):
         lstm_autoregressor = self.lstm_decoder.autoregress(decoder_input, steps, encoded_state)
         
         lstm_input = None # warmup_input is already provided to LSTM
-        outputs = []
         for i in range(steps):
             lstm_out = lstm_autoregressor.send(lstm_input)
             out = self._apply_output_layer(lstm_out)
@@ -191,6 +216,8 @@ class RBSteerableForecaster(enn.EquivariantModule):
                     res_input = lstm_input
                 out = [res + o for res, o in zip(res_input, out)]
                 
+            for geom_output in out:
+                yield geom_output
             
             if self.training and ground_truth is not None and epoch >= 0:
                 forced_decoding_prob = max(self.min_forced_decoding_prob, 
@@ -207,9 +234,6 @@ class RBSteerableForecaster(enn.EquivariantModule):
                     for inp in lstm_input:
                         inp.tensor = inp.tensor.detach()
             
-            outputs.extend(out)
-            
-        return outputs
     
     def _apply_output_layer(self, lstm_out: list[GeometricTensor]):  
         # shape: (b,h*c,w,d,seq)
@@ -258,7 +282,10 @@ class RBSteerableForecaster(enn.EquivariantModule):
         
         return latent
     
-    def _decode(self, latent):
+    def _decode(self, latent: torch.Tensor):
+        is_sequence = latent.ndim == 6
+        if not is_sequence:
+            latent = latent.unsqueeze(1)
         batch_size, seq_length = latent.shape[:2]
         
         if self.parallel_ops:
@@ -271,6 +298,9 @@ class RBSteerableForecaster(enn.EquivariantModule):
             for i in range(seq_length):
                 outputs.append(self.autoencoder.decode(latent[:, i]))
             output = torch.stack(outputs, dim=1)
+        
+        if not is_sequence:
+            output = output.squeeze(1)
         
         return output
     
@@ -297,10 +327,18 @@ class RBSteerableForecaster(enn.EquivariantModule):
         Returns:
             Tensor: Transformed tensor of shape [batch, seq, width, depth, height, sum(fieldsizes)]
         """
-        b, s = tensor.shape[:2]
-        w, d, h = self.out_latent_dims
-        
-        return tensor.reshape(b, s, h, -1, w, d).permute(0, 1, 4, 5, 2, 3)
+        if tensor.ndim == 5:
+            # tensor is sequence
+            b, s = tensor.shape[:2]
+            w, d, h = self.out_latent_dims
+            
+            return tensor.reshape(b, s, h, -1, w, d).permute(0, 1, 4, 5, 2, 3)
+        if tensor.ndim == 4:
+            # tensor is a single snapshot
+            b = tensor.shape[0]
+            w, d, h = self.out_latent_dims
+            
+            return tensor.reshape(b, h, -1, w, d).permute(0, 3, 4, 1, 2)
     
     def summary(self):   
         # LSTM   
