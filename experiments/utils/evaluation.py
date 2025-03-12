@@ -33,7 +33,7 @@ def compute_loss(model: torch.nn.Module, test_loader: DataLoader, loss_fns,
     
     running_losses = [0]*len(loss_fns)
     n = 0
-    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+    for outputs, predictions in predictions:
         n += batch_size
         for loss_nr, loss_fn in enumerate(loss_fns):
             batch_size = outputs.size(0)
@@ -59,7 +59,7 @@ def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, lo
     ax_indices = None
     ax_sizes = None
     n = 0
-    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
+    for outputs, predictions in predictions:
         batch_size = outputs.size(0)
         n += batch_size
         if ax_sizes is None:
@@ -82,30 +82,41 @@ def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, lo
     return avg_losses if multiple_losses else avg_losses[0]
 
 
+def compute_forecasts(model: torch.nn.Module, loader: DataLoader, steps: int,
+                      samples: int = None, batch_size: int = None):
+    batches = None
+    if samples is not None and batch_size is not None: 
+        batches = math.ceil(samples/batch_size)
+    
+    model.eval()
+    with torch.no_grad():
+        pbar = tqdm(loader, total=batches, desc='computing loss', unit='batch')
+        for (inputs, outputs) in pbar:
+            yield outputs, model.forward_gen(inputs, steps=steps)
+
+
 def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int, test_loader: DataLoader, loss_fns, 
-                                samples: int = None, batch_size: int = None, model_forward_kwargs: dict = {},
-                                confidence_interval: float = 0.95):
-    
-    
+                                steps: int, samples: int = None, batch_size: int = None, confidence_interval: float = 0.95):
     multiple_losses = isinstance(loss_fns, Iterable)
     if not multiple_losses: loss_fns = [loss_fns]
     
     # store old loss reductions since we need to modify them here
     old_loss_reductions = [loss_fn.reduction for loss_fn in loss_fns]
     old_parallel_ops = model.parallel_ops
-        
-    predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
+     
+    forecasts = compute_forecasts(model, test_loader, steps, samples, batch_size)
     
     model.parallel_ops = False # compute sequence output sequentially due to memory constraint
     
     losses = torch.zeros(len(loss_fns), samples, forecast_seq_length)
     n = 0
-    for batch_nr, (outputs, predictions) in enumerate(predictions, 1):
-        batch_size = outputs.size(0)
-        for loss_nr, loss_fn in enumerate(loss_fns):
-            loss_fn.reduction = 'none'
-            loss = loss_fn(outputs, predictions).mean(dim=(2,3,4,5)) # shape (batch_size, seq_length)
-            losses[loss_nr, n:n+batch_size, :] = loss
+    for ground_truth, forecast_gen in forecasts:
+        batch_size = ground_truth.size(0)
+        for i, forecast_snap in enumerate(forecast_gen):
+            for loss_nr, loss_fn in enumerate(loss_fns):
+                loss_fn.reduction = 'none'
+                loss = loss_fn(ground_truth[:, i], forecast_snap).mean(dim=(1,2,3,4)) # shape (batch_size,)
+                losses[loss_nr, n:n+batch_size, i] = loss
         n += batch_size
     
     model.parallel_ops = old_parallel_ops

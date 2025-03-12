@@ -217,7 +217,6 @@ if args.eval_autoregressive_performance:
     if args.model_name.startswith('AE'):
         print('Autoregressive performance can only be computed for forecasters')
     else:
-        autoregressive_model_forward_kwargs = {'steps': args.autoregressive_forecast_seq_length}
 
         # read current performances
         performance_file = os.path.join(results_dir, 'autoregressive_performance.json')
@@ -228,8 +227,9 @@ if args.eval_autoregressive_performance:
                                                                                 args.autoregressive_forecast_seq_length, 
                                                                                 autoregressive_test_loader,
                                                                                 [torch.nn.MSELoss(), torch.nn.L1Loss()], 
-                                                                                autoregressive_test_dataset.num_samples, args.batch_size, 
-                                                                                autoregressive_model_forward_kwargs,
+                                                                                args.autoregressive_forecast_seq_length,
+                                                                                autoregressive_test_dataset.num_samples, 
+                                                                                args.batch_size, 
                                                                                 args.autoregressive_confidence_interval)
         performance['mse'], performance['mae'] = avgs
         performance['mse_median'], performance['mae_median'] = medians
@@ -245,8 +245,9 @@ if args.eval_autoregressive_performance:
                                                                                 args.autoregressive_forecast_seq_length, 
                                                                                 autoregressive_train_loader,
                                                                                 [torch.nn.MSELoss(), torch.nn.L1Loss()], 
-                                                                                autoregressive_train_dataset.num_samples, args.batch_size, 
-                                                                                autoregressive_model_forward_kwargs,
+                                                                                args.autoregressive_forecast_seq_length,
+                                                                                autoregressive_train_dataset.num_samples, 
+                                                                                args.batch_size, 
                                                                                 args.autoregressive_confidence_interval)
         performance['mse_train'], performance['mae_train'] = avgs
         performance['mse_train_median'], performance['mae_train_median'] = medians
