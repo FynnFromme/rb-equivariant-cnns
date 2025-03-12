@@ -54,6 +54,7 @@ parser.add_argument('-latent_h_kernel_size', type=int, default=3)
 parser.add_argument('-drop_rate', type=float, default=0.2)
 parser.add_argument('-nonlinearity', type=str, default='ELU', choices=['ELU', 'ReLU', 'LeakyReLU'])
 parser.add_argument('-encoder_channels', nargs='+', type=int, default=None)
+parser.add_argument('-v_shares', nargs='+', type=int, default=None)
 parser.add_argument('-pool_layers', nargs='+', type=str2bool, default=None)
 parser.add_argument('-latent_channels', type=int, default=32)
 parser.add_argument('-weight_decay', type=float, default=0)
@@ -154,6 +155,7 @@ if args.encoder_channels is not None:
     encoder_channels = args.encoder_channels
     
 POOL_LAYERS = args.pool_layers
+V_SHARES = args.v_shares
 
 model_hyperparameters = {
     'model_type': args.model,
@@ -168,7 +170,8 @@ model_hyperparameters = {
     'rots': ROTS,
     'encoder_channels': encoder_channels,
     'latent_channels': LATENT_CHANNELS,
-    'pool_layers': POOL_LAYERS
+    'pool_layers': POOL_LAYERS,
+    'v_shares': V_SHARES
 }
 
 model = build_autoencoder(**model_hyperparameters)

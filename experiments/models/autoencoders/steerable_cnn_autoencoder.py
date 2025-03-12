@@ -21,6 +21,7 @@ class _SteerableConvBlock(enn.SequentialModule):
                  in_dims: tuple,
                  v_kernel_size: int,
                  h_kernel_size: int,
+                 v_share : int,
                  input_drop_rate: float,
                  bias: bool = True,
                  nonlinearity: Callable = enn.ELU,
@@ -39,6 +40,7 @@ class _SteerableConvBlock(enn.SequentialModule):
             in_dims (tuple): The spatial dimensions of the input data.
             v_kernel_size (int): The vertical kernel size.
             h_kernel_size (int): The horizontal kernel size (in both directions).
+            v_share (int): The number of neighboring output-heights sharing the same kernel.
             input_drop_rate (float): The drop rate for dropout applied to the input of the conv block. Set to 0
                 to turn off dropout.
             bias (bool, optional): Whether to apply a bias to the output of the convolution. 
@@ -55,6 +57,7 @@ class _SteerableConvBlock(enn.SequentialModule):
                                in_dims=in_dims,
                                v_kernel_size=v_kernel_size, 
                                h_kernel_size=h_kernel_size,
+                               v_share=v_share,
                                bias=bias and not batch_norm, # bias has no effect when using batch norm
                                v_stride=1, h_stride=1,
                                v_pad_mode='zero', h_pad_mode='circular')
@@ -82,6 +85,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                  latent_v_kernel_size: int,
                  latent_h_kernel_size: int,
                  drop_rate: float,
+                 v_shares: tuple = None,
                  pool_layers: tuple[bool] = None,
                  nonlinearity: Callable = enn.ELU,
                  **kwargs):
@@ -97,6 +101,9 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
             latent_channels (int): The number of channels in the latent space.
             v_kernel_size (int): The vertical kernel size.
             h_kernel_size (int): The horizontal kernel size (in both directions).
+            v_shares (tuple): The number of neighboring output-heights sharing the same kernel for each encoder 
+                layer (and latent convolution!). Therefore, len(v_shares)=len(encoder_channels)+1. The same is 
+                used in reversed order in the decoder. Defaults to a 1-tuple.
             latent_v_kernel_size (int): The vertical kernel size applied on the latent space.
             latent_h_kernel_size (int): The horizontal kernel size (in both directions) applied on the latent space.
             drop_rate (float): The drop rate used for dropout. Set to 0 to turn off dropout.
@@ -107,6 +114,11 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                 have no nonlinearity. Defaults to enn.ELU.
         """
         super().__init__()
+        if v_shares is not None:
+            assert len(v_shares) == len(encoder_channels)+1, 'required to specify v_share also for latent conv'
+        else:
+            v_shares = [1]*(len(encoder_channels)+1)
+        
         if pool_layers is None: pool_layers = [True]*len(encoder_channels)
         
         irrep_frequencies = (1, 1) if gspace.flips_order > 0 else (1,) # depending whether using Cn or Dn group
@@ -124,7 +136,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         ####   Encoder   ####
         #####################
         in_fields, in_dims = rb_fields, rb_dims
-        for i, (out_channels, pool) in enumerate(zip(encoder_channels, pool_layers), 1):
+        for i, (out_channels, v_share, pool) in enumerate(zip(encoder_channels, v_shares, pool_layers), 1):
             out_fields = out_channels*hidden_field_type
             layer_drop_rate = 0 if i == 1 else drop_rate # don't apply dropout to the networks input
             
@@ -134,6 +146,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                                                       in_dims=in_dims, 
                                                       v_kernel_size=v_kernel_size, 
                                                       h_kernel_size=h_kernel_size,
+                                                      v_share=v_share,
                                                       input_drop_rate=layer_drop_rate, 
                                                       nonlinearity=nonlinearity, 
                                                       batch_norm=True))
@@ -162,6 +175,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                                                   in_dims=in_dims, 
                                                   v_kernel_size=latent_v_kernel_size, 
                                                   h_kernel_size=latent_h_kernel_size,
+                                                  v_share=v_shares[-1],
                                                   input_drop_rate=drop_rate, 
                                                   nonlinearity=nonlinearity, 
                                                   batch_norm=True))
@@ -176,7 +190,8 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
         #####################
         decoder_channels = reversed(encoder_channels)
         upsample_layers = reversed(pool_layers)
-        for i, (out_channels, upsample) in enumerate(zip(decoder_channels, upsample_layers), 1):
+        decoder_v_shares = list(reversed(v_shares))
+        for i, (out_channels, v_share, upsample) in enumerate(zip(decoder_channels, decoder_v_shares, upsample_layers), 1):
             out_fields = out_channels*hidden_field_type
             
             decoder_layers.append(_SteerableConvBlock(gspace=gspace, 
@@ -185,6 +200,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                                                       in_dims=in_dims, 
                                                       v_kernel_size=v_kernel_size, 
                                                       h_kernel_size=h_kernel_size,
+                                                      v_share=v_share,
                                                       input_drop_rate=drop_rate,
                                                       nonlinearity=nonlinearity, 
                                                       batch_norm=True))
@@ -212,6 +228,7 @@ class RBSteerableAutoencoder(enn.EquivariantModule):
                                                   in_dims=in_dims, 
                                                   v_kernel_size=v_kernel_size, 
                                                   h_kernel_size=h_kernel_size,
+                                                  v_share=decoder_v_shares[-1],
                                                   input_drop_rate=drop_rate, 
                                                   nonlinearity=None, 
                                                   batch_norm=False))

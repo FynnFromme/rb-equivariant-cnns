@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch import Tensor
 from torch.nn import functional as F
 
 from escnn import nn as enn
@@ -19,6 +20,7 @@ class RBSteerableConv(enn.EquivariantModule):
                  in_dims: tuple,
                  v_kernel_size: int,
                  h_kernel_size: int,
+                 v_share: int = 1,
                  v_stride: int = 1,
                  h_stride: int = 1,
                  h_dilation: int = 1,
@@ -47,6 +49,7 @@ class RBSteerableConv(enn.EquivariantModule):
             in_dims (tuple): The spatial dimensions of the input data.
             v_kernel_size (int): The vertical kernel size.
             h_kernel_size (int): The horizontal kernel size (in both directions).
+            v_share (int): The number of neighboring output-heights sharing the same kernel. Defaults to 1.
             v_stride (int, optional): The vertical stride. Defaults to 1.
             h_stride (int, optional): The horizontal stride (in both directions). Defaults to 1.
             h_dilation (int, optional): The horizontal dilation. Defaults to 1.
@@ -92,28 +95,31 @@ class RBSteerableConv(enn.EquivariantModule):
         out_height = conv_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
                                             dilation=1, pad=v_pad_mode!='valid')
         
+        assert out_height%v_share == 0, 'the output height must be divisible by v_share'
+        
         # under the hood, this layer works by stacking the vertical neighborhoods of the input and then
         # applying a grouped 2d convolution
-        r2_conv_in_type = FieldType(gspace, out_height*v_kernel_size*in_fields) # concatenated neighborhoods
+        r2_conv_in_type = FieldType(gspace, (out_height//v_share)*v_kernel_size*in_fields) # concatenated neighborhoods
+        r2_conv_out_type = FieldType(gspace, (out_height//v_share)*out_fields)
         out_type = FieldType(gspace, out_height*out_fields)
 
         self.r2_conv = enn.R2Conv(in_type=r2_conv_in_type, 
-                                       out_type=out_type, 
-                                       kernel_size=h_kernel_size, 
-                                       padding=tuple(h_padding), 
-                                       stride=h_stride, 
-                                       dilation=h_dilation,
-                                       padding_mode=h_pad_mode,
-                                       groups=out_height, 
-                                       bias=bias,
-                                       sigma=sigma,
-                                       frequencies_cutoff=frequencies_cutoff,
-                                       rings=rings,
-                                       maximum_offset=maximum_offset,
-                                       recompute=recompute,
-                                       basis_filter=basis_filter,
-                                       initialize=initialize,
-                                       **kwargs)
+                                  out_type=r2_conv_out_type, 
+                                  kernel_size=h_kernel_size, 
+                                  padding=tuple(h_padding), 
+                                  stride=h_stride, 
+                                  dilation=h_dilation,
+                                  padding_mode=h_pad_mode,
+                                  groups=out_height//v_share, 
+                                  bias=bias,
+                                  sigma=sigma,
+                                  frequencies_cutoff=frequencies_cutoff,
+                                  rings=rings,
+                                  maximum_offset=maximum_offset,
+                                  recompute=recompute,
+                                  basis_filter=basis_filter,
+                                  initialize=initialize,
+                                  **kwargs)
         
         self.in_fields = in_fields
         self.out_fields = out_fields
@@ -123,7 +129,8 @@ class RBSteerableConv(enn.EquivariantModule):
         
         # in_ and out_type are the stacked fields accross the height dimension
         self.in_type = FieldType(gspace, self.in_height*self.in_fields) # without any neighborhood concatenation
-        self.r2_conv_in_type = r2_conv_in_type # with neighborhood concatenation
+        self.r2_conv_in_type = r2_conv_in_type # with neighborhood concatenation and vsharing
+        self.r2_conv_out_type = r2_conv_out_type # with vsharing
         self.out_type = out_type
         
         self.in_dims = in_dims
@@ -134,6 +141,7 @@ class RBSteerableConv(enn.EquivariantModule):
         self.v_pad = v_pad_mode!='valid' # whether same padding is applied
         self.v_stride = v_stride
         self.v_kernel_size = v_kernel_size
+        self.v_share = v_share
         
         
     def forward(self, input: GeometricTensor) -> GeometricTensor:
@@ -149,25 +157,36 @@ class RBSteerableConv(enn.EquivariantModule):
         """
         assert input.type == self.in_type
         
-        concatenated_neighborhoods = self._concat_vertical_neighborhoods(input)
+        input = self._concat_vertical_neighborhoods(input.tensor)
         
-        return self.r2_conv.forward(concatenated_neighborhoods)
+        if self.v_share > 1:
+            input = self._concat_v_share_along_batch(input)
+        
+        input = GeometricTensor(input, self.r2_conv_in_type)
+        
+        output = self.r2_conv.forward(input) # shape (batch*v_share, (out_height//v_share)*fields, width, depth)
+        
+        if self.v_share > 1:
+            output = self._split_v_share_along_batch(output.tensor)
+            output = GeometricTensor(output, self.out_type)
+            
+        return output
         
         
-    def _concat_vertical_neighborhoods(self, geom_tensor: GeometricTensor) -> GeometricTensor:
+    def _concat_vertical_neighborhoods(self, tensor: Tensor) -> Tensor:
         """Concatenates the local vertical neighborhoods along the height/field dimension.
 
         Args:
-            geom_tensor (GeometricTensor): Input tensor of shape [batch, inHeight*sum(fieldsizes), width, depth].
+            geom_tensor (Tensor): Input tensor of shape [batch, inHeight*sum(fieldsizes), width, depth].
 
         Returns:
-            GeometricTensor: Output tensor of shape [batch, outHeight*ksize*sum(fieldsizes), width, depth].
+            Tensor: Output tensor of shape [batch, outHeight*ksize*sum(fieldsizes), width, depth].
         """
         # split height and field dimension
-        tensor = geom_tensor.tensor.reshape(-1, 
-                                            self.in_height, 
-                                            sum(field.size for field in self.in_fields), 
-                                            *self.in_dims[:2])
+        tensor = tensor.reshape(-1, 
+                                self.in_height, 
+                                sum(field.size for field in self.in_fields), 
+                                *self.in_dims[:2])
 
         if self.v_pad:
             # pad height
@@ -182,7 +201,41 @@ class RBSteerableConv(enn.EquivariantModule):
         tensor = tensor.permute(0, 1, 5, 2, 3, 4) # shape (b,outH,ksize,fields,w,d)
         tensor = tensor.flatten(start_dim=1, end_dim=3) # shape (b,outH*ksize*fields,w,d)
         
-        return GeometricTensor(tensor, self.r2_conv_in_type)
+        return tensor
+    
+    
+    def _concat_v_share_along_batch(self, tensor: Tensor) -> Tensor:
+        batch_size, width, depth = tensor.shape[0], *tensor.shape[-2:]
+        
+        # factor out height dimension
+        tensor = tensor.reshape(batch_size, self.out_height, -1, width, depth) # shape (b,outH,ksize*fields,w,d)
+        
+        # concatenate neighborhoods sharing the same kernel along the batch dimension
+        # to shape (b*v_share,outH//v_share,ksize*fields,w,d)
+        tensor = tensor.reshape(batch_size, self.out_height//self.v_share, self.v_share, -1, width, depth)
+        tensor = tensor.transpose(1, 2)
+        tensor = tensor.reshape(batch_size*self.v_share, self.out_height//self.v_share, -1, width, depth)
+        
+        tensor = tensor.flatten(start_dim=1, end_dim=2)
+
+        return tensor
+    
+    
+    def _split_v_share_along_batch(self, tensor: Tensor) -> Tensor:
+        batch_size, width, depth = tensor.shape[0]//self.v_share, *tensor.shape[-2:]
+        
+        # factor out height dimension
+        tensor = tensor.reshape(batch_size, self.out_height, -1, width, depth) # shape (b*v_share,outH//v_share,fields,w,d)
+        
+        # split neighborhoods sharing the same kernel of the batch dimension
+        # to shape (b,outH,fields,w,d)
+        tensor = tensor.reshape(batch_size, self.v_share, self.out_height//self.v_share, -1, width, depth)
+        tensor = tensor.transpose(1, 2)
+        tensor = tensor.reshape(batch_size, self.out_height, -1, width, depth)
+        
+        tensor = tensor.flatten(start_dim=1, end_dim=2)
+
+        return tensor
     
     
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:
