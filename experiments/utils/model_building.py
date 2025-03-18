@@ -3,13 +3,13 @@ from torch import nn
 from escnn import nn as enn
 from escnn import gspaces
 
-from experiments.models.autoencoders.steerable_cnn_autoencoder import RBSteerableAutoencoder
-from experiments.models.autoencoders.steerable_cnn3d_autoencoder import RB3DSteerableAutoencoder
-from experiments.models.autoencoders.cnn_autoencoder import RBAutoencoder
-from experiments.models.autoencoders.cnn3d_autoencoder import RB3DAutoencoder
+from experiments.models.autoencoders.steerable_conv_autoencoder import RBSteerableAutoencoder
+from experiments.models.autoencoders.steerable_conv3d_autoencoder import RB3DSteerableAutoencoder
+from experiments.models.autoencoders.conv_autoencoder import RBAutoencoder
+from experiments.models.autoencoders.conv3d_autoencoder import RB3DAutoencoder
 
-from experiments.models.forecasters.cnn3d_forecaster import RB3DForecaster
-from experiments.models.forecasters.steerable_cnn_forecaster import RBSteerableForecaster
+from experiments.models.forecasters.conv3d_forecaster import RB3DForecaster
+from experiments.models.forecasters.steerable_conv_forecaster import RBSteerableForecaster
 
 from utils.flipRot2dOnR3 import flipRot2dOnR3
 from utils.training import load_trained_model
