@@ -1,6 +1,6 @@
 """
 Transforms raw simulation data into a shape that can be used for machine learning and splits it
-into train, validation and test datasets.
+into standardized train, validation and test datasets.
 """
 
 import h5py
@@ -9,18 +9,11 @@ import os
 import random
 import re
 from sklearn.preprocessing import StandardScaler
-from collections import defaultdict
-from typing import Callable, Any, Generator
-
-DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'datasets')
-SIM_DATA_DIR = os.path.join(DATA_DIR, '..', '..', 'simulation', '3d', 'data')
-os.makedirs(DATA_DIR, exist_ok=True)
+from typing import Generator
+from argparse import ArgumentParser
 
 class DataPreparation:
-    def __init__(self, 
-                 transformation: Callable[[np.ndarray, Any], np.ndarray] = lambda batch, precomputed: batch,
-                 transform_precomputation: Callable[[list[str]], dict] = lambda files: defaultdict(lambda:None),
-                 out_channels: int = 4,
+    def __init__(self,
                  p_train: float = 0.6, 
                  p_valid: float = 0.2, 
                  p_test: float = 0.2, 
@@ -31,24 +24,13 @@ class DataPreparation:
         a format that is suited for machine learning.
 
         Args:
-            transformation (Callable, optional): Transformation applied to the simulation data.
-                For instance transforming the rb data into heatflux via `DataPreparation.compute_heatflux`.
-                The second argument is a precomputed value for the corresponding simulation (e.g. the precomputed
-                temperature mean via `DataPreparation.compute_temp_means`)
-            transform_precomputation (Callable, optional): A function that performs precomputation for every
-                simulation file and stores the result in a dictionary. This for instance could be used to precompute
-                the temperature mean for computing the heat flux.
-            out_channels (int, optional): The number of output channels of the transformation. Defaults to 4.
             p_train (float, optional): The fraction of training data. Defaults to 0.6.
             p_valid (float, optional): The fraction of validation data. Defaults to 0.2.
             p_test (float, optional): The fraction of testing data. Defaults to 0.2.
             first_snapshot (int, optional): The first snapshot of the simulation data used for ML. Defaults to 0.
             step (int, optional): Can be used to only take every for example 2nd snapshot. Defaults to 1.
             batch_size (int, optional): The number of samples loaded into memory at once. Defaults to 64.
-        """        
-        self.transformation = transformation
-        self.transform_precomputation = transform_precomputation
-        self.out_channels = out_channels
+        """
         
         self.p_train = p_train
         self.p_valid = p_valid
@@ -59,10 +41,9 @@ class DataPreparation:
         self.batch_size = batch_size
         
         
-    def prepare_data(self, simulation_name: str):
+    def prepare_data(self, data_dir: str, sim_dir: str, simulation_name: str):
         """Performs the actual data preparation:
         - Splitting into train, validation, test sets
-        - Applying transformation
         - Standardize to zero mean and unit variance
         
         The results are stored in the datasets directory as a .h5 file. The file includes 3 datasets
@@ -72,14 +53,14 @@ class DataPreparation:
         The data has the shape [samples, width, depth, height, channels].
 
         Args:
+            data_dir (str): The path of the directory to store the dataset in.
+            sim_dir (str): The path of the directory, where the simulations are stored in.
             simulation_name (str): The name of the simulation.
         """
         random.seed(simulation_name)
     
-        files = self._simulation_files(simulation_name)
+        files = self._simulation_files(sim_dir, simulation_name)
         snapshots, *dims, sim_channels = self._data_shape(files)
-        
-        transform_args = self.transform_precomputation(files) # precomputed information required for transformation
             
         train_files, valid_files, test_files = self._split_random_initializations(files)
         
@@ -88,52 +69,15 @@ class DataPreparation:
         N_valid = snapshots_per_file*len(valid_files)
         N_test = snapshots_per_file*len(test_files)
         
-        datafile = self._create_h5_datasets(simulation_name, N_train, N_valid, N_test, snapshots_per_file, dims) # output h5 file
+        datafile = self._create_h5_datasets(data_dir, simulation_name, N_train, N_valid, 
+                                            N_test, snapshots_per_file, dims) # output h5 file
         
-        scaler = self._fit_scaler(files, transform_args) # can be used to standardize data
+        scaler = self._fit_scaler(files) # can be used to standardize data
         self._save_scaler(scaler, datafile, dims) # to be able to unstandardize data later (e.g. for visualization)
         
-        self._write_data(datafile, scaler, train_files, valid_files, test_files, transform_args)
+        self._write_data(datafile, scaler, train_files, valid_files, test_files)
         
         datafile.close()
-        
-
-    def compute_heatflux(self, sim_data: np.ndarray, temp_mean: float) -> np.ndarray:
-        """Computes local convective heat flux.
-
-        Args:
-            sim_data (np.ndarray): The simulation data of shape nwdhc.
-            temp_mean (float): The temperature mean of the whole simulation.
-
-        Returns:
-            np.ndarray: The local convective heat flux of the data of shape nwdhc with one channel.
-        """
-        temp = sim_data[:, :, :, :, [0]]
-        vel_z = sim_data[:, :, :, :, [3]]
-        return vel_z * (temp-temp_mean)
-
-
-    def compute_temp_means(self, files: list[str]) -> dict[str, float]:
-        """Precomputes the temperature mean (accross space and time) of every simulation.
-
-        Args:
-            files (list[str]): A list of all simulation file names.
-
-        Returns:
-            dict[str, float]: The mean temperature of each simulation.
-        """
-        temp_means = {}
-        for fn in files:
-            batch_means = []
-            batch_sizes = [] # last batch might has different size
-            
-            for batch in self._read_data(fn, transform_args=None, transform=False):
-                batch_means.append(batch[:, :, :, :, 0].mean())
-                batch_sizes.append(batch.shape[0])
-                
-            temp_means[fn] = np.average(batch_means, weights=batch_sizes) # weight according to batch sizes
-            
-        return temp_means
             
 
     def _data_shape(self, files: list[str]) -> tuple:
@@ -153,35 +97,33 @@ class DataPreparation:
         return (n, w, d, h, c)
 
 
-    def _simulation_files(self, simulation_name: str) -> list[str]:
+    def _simulation_files(self, sim_dir: str, simulation_name: str) -> list[str]:
         """Comptues the paths to all simulation files corresponding to the simulation name.
 
         Args:
+            sim_dir (str): The path of the directory, where the simulations are stored in.
             simulation_name (str): The name of the simulation.
 
         Returns:
             list[str]: The list of paths to all simulation files.
         """
-        simulation_dir = os.path.join(SIM_DATA_DIR, simulation_name)
+        simulation_dir = os.path.join(sim_dir, simulation_name)
         sim_names = filter(lambda fn: re.match('sim[0-9]+', fn), os.listdir(simulation_dir))
         sim_paths = [os.path.join(simulation_dir, sim_name, 'sim.h5') for sim_name in sim_names]
         return sim_paths
 
 
-    def _read_data(self, filename: str, transform_args: Any, 
-                   transform: bool = True) -> Generator[np.ndarray, None, None]:
-        """Yields the transformed simulation data of the given simulation file batch-wise.
-        Assuming the simulation data has the shape hdwcn, the transformed data is yielded in shape
+    def _read_data(self, filename: str) -> Generator[np.ndarray, None, None]:
+        """Yields the simulation data of the given simulation file batch-wise.
+        Assuming the simulation data has the shape hdwcn, the data is yielded in shape
         (samples(n), width(w), depth(d), height(h), channels(c))
         
 
         Args:
             filename (str): The filename of the simulation.
-            transform_args (Any): Precomputed information required for transformation.
-            transform (bool, optional): Whether to transform the data. Defaults to True.
 
         Yields:
-            np.ndarray: A transformed batch of the simulation data.
+            np.ndarray: A batch of the simulation data.
         """
         with h5py.File(filename, 'r') as hf:
             snapshots = hf['data']
@@ -190,17 +132,14 @@ class DataPreparation:
             for i in range(self.first_snapshot, N, self.step*self.batch_size):
                 batch = snapshots[:, :, :, :, i:i+self.step*self.batch_size:self.step]
                 batch = batch.transpose([4, 2, 1, 0, 3]) # hdwcn -> nwdhc
-                if transform:
-                    batch = self.transformation(batch, transform_args)
                 yield batch
 
 
-    def _fit_scaler(self, sim_filenames: list[str], transform_args: dict[str, Any]) -> StandardScaler:
+    def _fit_scaler(self, sim_filenames: list[str]) -> StandardScaler:
         """Fits a sklearn.StandardScaler to the whole simulation data.
 
         Args:
             sim_filenames (list[str]): The list of simulation files.
-            transform_args (dict[str, Any]): The precomputed transformation arguments for every simulation.
 
         Returns:
             StandardScaler: The fitted StandardScaler.
@@ -211,7 +150,7 @@ class DataPreparation:
         
         # make sure to load arrays sequentially to save memory
         for i, filename in enumerate(sim_filenames):
-            for batch in self._read_data(filename, transform_args[filename]):
+            for batch in self._read_data(filename):
                 scaler.partial_fit(batch.reshape((batch.shape[0], -1)))
                 
             print(f'-> fitted scaler to simulation file {i+1}/{len(sim_filenames)}')
@@ -228,18 +167,18 @@ class DataPreparation:
             datafile (h5py.File): The output file.
             dims (tuple): The spatial dimensions of the simulation data.
         """
-        shape = (*dims, self.out_channels)
+        shape = (*dims, 4)
         chunk_shape = (*dims, 1)
         
         mean_data = datafile.create_dataset("mean", shape, chunks=chunk_shape)
         std_data = datafile.create_dataset("std", shape, chunks=chunk_shape)  
         
         mean = scaler.mean_
-        mean = mean.reshape(*dims, self.out_channels) # since scaler works on flattened features
+        mean = mean.reshape(*dims, 4) # since scaler works on flattened features
         mean_data[:, :, :, :] = mean
         
         std = scaler.scale_
-        std = std.reshape(*dims, self.out_channels) # since scaler works on flattened features
+        std = std.reshape(*dims, 4) # since scaler works on flattened features
         std_data[:, :, :, :] = std
 
 
@@ -278,13 +217,14 @@ class DataPreparation:
         return train_files, valid_files, test_files
         
         
-    def _create_h5_datasets(self, simulation_name: str, N_train: int, N_valid: int, 
+    def _create_h5_datasets(self, data_dir: str, simulation_name: str, N_train: int, N_valid: int, 
                             N_test: int, snapshots_per_file: int, dims: tuple) -> h5py.File:
         """Creates a .h5 file for the output and initializes empty datasets for the train, validation
         and test sets.
 
         Args:
-            simulation_name (str): The name of the simulation
+            data_dir (str): The path of the directory to store the dataset in.
+            simulation_name (str): The name of the simulation.
             N_train (int): The number of training snapshots.
             N_valid (int): The number of validaiton snapshots.
             N_test (int): The number of testing snapshots.
@@ -294,9 +234,9 @@ class DataPreparation:
         Returns:
             h5py.File: The output .h5 file.
         """
-        datafile = h5py.File(os.path.join(DATA_DIR, f'{simulation_name}.h5'), 'w')
+        datafile = h5py.File(os.path.join(data_dir, f'{simulation_name}.h5'), 'w')
         
-        samples_shape = (*dims, self.out_channels)
+        samples_shape = (*dims, 4)
         chunk_shape = (1, *dims, 1)
         
         train_data = datafile.create_dataset('train', (N_train, *samples_shape), chunks=chunk_shape)
@@ -328,8 +268,8 @@ class DataPreparation:
 
 
     def _write_data(self, datafile: h5py.File, scaler: StandardScaler, train_files: list[str], 
-                    valid_files: list[str], test_files: list[str], transform_args: dict[str, Any]):
-        """Writes the transformed and standardized simulation data into the output .h5 file.
+                    valid_files: list[str], test_files: list[str]):
+        """Writes the standardized simulation data into the output .h5 file.
 
         Args:
             datafile (h5py.File): The output file.
@@ -337,8 +277,6 @@ class DataPreparation:
             train_files (list[str]): The list of all train simulation files.
             valid_files (list[str]): The list of all validation simulation files.
             test_files (list[str]): The list of all test simulation files.
-            transform_args (dict[str, Any]): The precomputed arguments for each simulation file required for
-                transformation of the simulation data. 
         """
         
         print('writing files...')
@@ -349,7 +287,7 @@ class DataPreparation:
             next_index = 0
             for i, filename in enumerate(files):
                 # read data sequentially to save memory
-                for batch in self._read_data(filename, transform_args[filename]):
+                for batch in self._read_data(filename):
                     scaled_batch = self._standardize_batch(scaler, batch)
                     
                     batch_snaps = scaled_batch.shape[0]
@@ -365,7 +303,7 @@ class DataPreparation:
 
         Args:
             scaler (StandardScaler): The fitted scaler to standardize the data.
-            batch (np.ndarray): The transformed simulation data.
+            batch (np.ndarray): The simulation data.
 
         Returns:
             np.ndarray: The standardized simulation data.
@@ -380,10 +318,49 @@ class DataPreparation:
         return scaled_batch
 
 
-if __name__ == '__main__':
-    prep = DataPreparation(
-                p_train=0.6, p_valid=0.2, p_test=0.2, 
-                first_snapshot=200,
-                step=1) # every shapshot
+def parse_arguments():
+    parser = ArgumentParser(description="""Transforms raw 3D Rayleigh-Bénard simulation data into a shape that can be 
+                            used for machine learning and splits it into standardized train, validation 
+                            and test datasets.
+                            
+                            The results are stored in the datasets directory as a .h5 file. The file includes 
+                            3 datasets ("train", "valid", "test") that include the data. It also includes the 
+                            datasets "mean" and "variance" in order to be able to unstandardize the data later.
+        
+                            Each dataset has the shape [samples, width, depth, height, channels].""")
     
-    prep.prepare_data('x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300')
+    current_dir = os.path.dirname(os.path.realpath(__file__))
+    default_data_dir = os.path.join(current_dir, 'datasets')
+    default_sim_dir = os.path.join(current_dir, '..', 'simulation', '3d', 'data')
+    
+    parser.add_argument('sim_name', type=str, default=default_sim_dir,
+                        help='The name of the simulation to transfer into a ML dataset.')
+    parser.add_argument('--data_dir', type=str, default=default_data_dir,
+                        help='The path of the directory to store the dataset in.')
+    parser.add_argument('--sim_dir', type=str, default=default_sim_dir,
+                        help='The path of the directory, where the simulations are stored in.\
+                            The path should *not* include the simulation name.')
+    parser.add_argument('--p_train', type=float, default=0.6,
+                        help='The fraction of the simulations used for training.')
+    parser.add_argument('--p_valid', type=float, default=0.2,
+                        help='The fraction of the simulations used for validation.')
+    parser.add_argument('--p_test', type=float, default=0.2,
+                        help='The fraction of the simulations used for testing.')
+    parser.add_argument('--first_snapshot', type=int, default=200,
+                        help='The number of initial snapshots of each simulation to discard \
+                            when creating the dataset.')
+    parser.add_argument('--step', type=int, default=1,
+                        help="If step>1, only every i'th snapshot is included in the dataset.")
+    
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_arguments()
+    os.makedirs(args.data_dir, exist_ok=True)
+    prep = DataPreparation(
+                p_train=args.p_train, p_valid=args.p_valid, p_test=args.p_test, 
+                first_snapshot=args.first_snapshot,
+                step=args.step)
+    
+    prep.prepare_data(args.data_dir, args.sim_dir, args.sim_name)
