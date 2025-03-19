@@ -42,9 +42,8 @@ class RBConv(nn.Module):
         
         v_pad_mode = v_pad_mode.lower()
         h_pad_mode = h_pad_mode.lower()
-        
-        assert v_pad_mode.lower() in ['valid', 'zeros']
-        assert h_pad_mode.lower() in ['valid', 'zeros', 'circular', 'reflect', 'replicate']
+        assert v_pad_mode in ['valid', 'zeros']
+        assert h_pad_mode in ['valid', 'zeros', 'circular', 'reflect', 'replicate']
         assert len(in_dims) == 3
         
         if h_pad_mode == 'valid':
@@ -56,7 +55,7 @@ class RBConv(nn.Module):
                          for i in [0, 1]]
         
         out_height = conv_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
-                                            dilation=1, pad=v_pad_mode!='valid')
+                                                 dilation=1, pad=v_pad_mode!='valid')
         
         # under the hood, this layer works by stacking the vertical neighborhoods of the input and then
         # applying a grouped 2d convolution
@@ -66,7 +65,7 @@ class RBConv(nn.Module):
         self.conv2d = nn.Conv2d(in_channels=conv2d_in_channels, 
                                 out_channels=conv2d_out_channels, 
                                 kernel_size=h_kernel_size, 
-                                padding=tuple(h_padding), 
+                                padding=tuple(h_padding), # vertical padding is done separately
                                 stride=h_stride, 
                                 dilation=h_dilation,
                                 padding_mode=h_pad_mode,
@@ -77,16 +76,13 @@ class RBConv(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         
-        # combined height and channel dimension
+        # with combined height and channel dimension
         self.conv2d_in_channels = conv2d_in_channels
         self.conv2d_out_channels = conv2d_out_channels
         
-        self.in_height = in_dims[-1]
-        self.out_height = out_height
-        
         self.in_dims = in_dims
         self.out_dims = [conv_utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
-                                                pad=h_pad_mode!='valid', equal_pad=True) 
+                                                     pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
         self.v_pad = v_pad_mode!='valid'
@@ -119,12 +115,12 @@ class RBConv(nn.Module):
             Tensor: Output tensor of shape [batch, outHeight*ksize*channels, width, depth].
         """
         # split height and channel dimension
-        tensor = tensor.reshape(-1, self.in_height, self.in_channels, *self.in_dims[:2]) 
+        tensor = tensor.reshape(-1, self.in_dims[-1], self.in_channels, *self.in_dims[:2]) 
 
         if self.v_pad:
             # pad height
-            padding = conv_utils.required_same_padding(self.in_height, self.v_kernel_size, 
-                                                  self.v_stride, dilation=1, split=True)
+            padding = conv_utils.required_same_padding(self.in_dims[-1], self.v_kernel_size, 
+                                                       self.v_stride, dilation=1, split=True)
             tensor = F.pad(tensor, (*([0,0]*3), *padding)) # shape (b,padH,c,w,d)
         
         # compute neighborhoods
@@ -135,14 +131,6 @@ class RBConv(nn.Module):
         tensor = tensor.flatten(start_dim=1, end_dim=3) # shape (b,outH*ksize*c,w,d)
         
         return tensor
-    
-    
-    def train(self, *args, **kwargs):
-        return self.conv2d.train(*args, **kwargs)
-    
-    
-    def eval(self, *args, **kwargs):
-        return self.conv2d.eval(*args, **kwargs)
 
 
 class RBPooling(nn.Module):
@@ -167,9 +155,6 @@ class RBPooling(nn.Module):
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] // h_kernel_size for i in [0, 1]] + [in_dims[-1] // v_kernel_size]
         
-        self.in_height = in_dims[-1]
-        self.out_height = self.out_dims[-1]
-        
         self.in_channels = in_channels
         self.out_channels = in_channels
         
@@ -189,7 +174,7 @@ class RBPooling(nn.Module):
             Tensor: The pooled tensor of shape [batch, outHeight*channels, outWidth, outDepth]
         """      
         # transform tensor to be able to apply the torch pooling operation
-        tensor = input.reshape(-1, self.in_height, self.in_channels, *self.in_dims[:2])
+        tensor = input.reshape(-1, self.in_dims[-1], self.in_channels, *self.in_dims[:2])
         tensor = tensor.permute(0, 2, 3, 4, 1)
         
         # perform pooling
@@ -223,9 +208,6 @@ class RBUpsampling(nn.Module):
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] * h_scale for i in [0, 1]] + [in_dims[-1] * v_scale]
         
-        self.in_height = in_dims[-1]
-        self.out_height = self.out_dims[-1]
-        
         self.in_channels = in_channels
         self.out_channels = in_channels
         
@@ -243,7 +225,7 @@ class RBUpsampling(nn.Module):
             Tensor: The upsampled tensor of shape [batch, outHeight*channels, outWidth, outDepth]
         """     
         # transform tensor to be able to apply the torch upsampling operation
-        tensor = input.reshape(-1, self.in_height, self.in_channels, *self.in_dims[:2])
+        tensor = input.reshape(-1, self.in_dims[-1], self.in_channels, *self.in_dims[:2])
         tensor = tensor.permute(0, 2, 3, 4, 1)
         
         # perform upsampling

@@ -44,9 +44,8 @@ class RB3DConv(nn.Module):
         
         v_pad_mode = v_pad_mode.lower()
         h_pad_mode = h_pad_mode.lower()
-        
-        assert v_pad_mode.lower() in ['valid', 'zeros']
-        assert h_pad_mode.lower() in ['valid', 'zeros', 'circular', 'reflect', 'replicate']
+        assert v_pad_mode in ['valid', 'zeros']
+        assert h_pad_mode in ['valid', 'zeros', 'circular', 'reflect', 'replicate']
         assert len(in_dims) == 3
         
         if h_pad_mode == 'valid':
@@ -63,7 +62,7 @@ class RB3DConv(nn.Module):
                                                          dilation=v_dilation, split=True)
         
         out_height = conv_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, dilation=v_dilation, 
-                                            pad=v_pad_mode!='valid')
+                                                 pad=v_pad_mode!='valid')
 
         self.conv3d = nn.Conv3d(in_channels=in_channels, 
                                 out_channels=out_channels, 
@@ -78,12 +77,9 @@ class RB3DConv(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         
-        self.in_height = in_dims[-1]
-        self.out_height = out_height
-        
         self.in_dims = in_dims
         self.out_dims = [conv_utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
-                                                pad=h_pad_mode!='valid', equal_pad=True) 
+                                                     pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
         
@@ -101,14 +97,6 @@ class RB3DConv(nn.Module):
         input = F.pad(input, self.v_padding, 'constant', 0)
         
         return self.conv3d.forward(input)
-        
-        
-    def train(self, *args, **kwargs):
-        return self.conv3d.train(*args, **kwargs)
-    
-    
-    def eval(self, *args, **kwargs):
-        return self.conv3d.eval(*args, **kwargs)
     
 
 class RBPooling(nn.Module):
@@ -131,9 +119,6 @@ class RBPooling(nn.Module):
         
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] // h_kernel_size for i in [0, 1]] + [in_dims[-1] // v_kernel_size]
-        
-        self.in_height = in_dims[-1]
-        self.out_height = self.out_dims[-1]
         
         self.in_channels = in_channels
         self.out_channels = in_channels
@@ -174,9 +159,6 @@ class RBUpsampling(nn.Module):
         
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] * h_scale for i in [0, 1]] + [in_dims[-1] * v_scale]
-        
-        self.in_height = in_dims[-1]
-        self.out_height = self.out_dims[-1]
         
         self.in_channels = in_channels
         self.out_channels = in_channels

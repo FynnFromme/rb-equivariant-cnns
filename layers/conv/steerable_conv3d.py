@@ -68,7 +68,6 @@ class RBSteerable3DConv(enn.EquivariantModule):
         
         v_pad_mode = v_pad_mode.lower()
         h_pad_mode = h_pad_mode.lower()
-        
         assert v_pad_mode in ['valid', 'zeros']
         assert h_pad_mode in ['valid', 'zeros', 'circular', 'reflect', 'replicate']
         assert len(in_dims) == 3
@@ -85,11 +84,10 @@ class RBSteerable3DConv(enn.EquivariantModule):
         self.v_padding = 0, 0
         if v_pad_mode != 'valid':
             self.v_padding = conv_utils.required_same_padding(in_dims[2], kernel_size, stride, 
-                                                                 dilation, split=True)
+                                                              dilation, split=True)
         
         out_height = conv_utils.conv_output_size(in_dims[2], kernel_size, stride, dilation, 
                                                     pad=v_pad_mode!='valid')
-
 
         in_type = FieldType(gspace, in_fields)
         out_type = FieldType(gspace, out_fields)
@@ -113,12 +111,9 @@ class RBSteerable3DConv(enn.EquivariantModule):
         self.in_type = in_type
         self.out_type = out_type
         
-        self.in_height = in_dims[2]
-        self.out_height = out_height
-        
         self.in_dims = in_dims
         self.out_dims = [conv_utils.conv_output_size(in_dims[i], kernel_size, stride, dilation, 
-                                                        pad=h_pad_mode!='valid', equal_pad=True) 
+                                                     pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
         
@@ -140,14 +135,6 @@ class RBSteerable3DConv(enn.EquivariantModule):
         input = GeometricTensor(input_tensor, self.in_type)
         
         return self.r3conv.forward(input)
-        
-        
-    def train(self, *args, **kwargs):
-        return self.r3conv.train(*args, **kwargs)
-    
-    
-    def eval(self, *args, **kwargs):
-        return self.r3conv.eval(*args, **kwargs)
     
     
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:
@@ -226,9 +213,6 @@ class RBPooling(enn.EquivariantModule):
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] // h_kernel_size for i in [0, 1]] + [in_dims[2] // v_kernel_size]
         
-        self.in_height = in_dims[2]
-        self.out_height = self.out_dims[2]
-        
         self.in_fields = in_fields
         self.out_fields = in_fields
         
@@ -257,7 +241,6 @@ class RBPooling(enn.EquivariantModule):
         return output
         
     
-    
     def evaluate_output_shape(self, input_shape: tuple) -> tuple:
         """Computes the shape of the output tensor.
 
@@ -272,7 +255,7 @@ class RBPooling(enn.EquivariantModule):
         
         batch, _, in_width, in_depth = input_shape
         
-        out_height = self.in_height // self.v_kernel_size
+        out_height = self.in_dims[-1] // self.v_kernel_size
         out_width = in_width // self.h_kernel_size
         out_depth = in_depth // self.h_kernel_size
         
@@ -299,9 +282,6 @@ class RBUpsampling(enn.EquivariantModule):
         
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] * h_scale for i in [0, 1]] + [in_dims[2] * v_scale]
-        
-        self.in_height = in_dims[2]
-        self.out_height = self.out_dims[2]
         
         self.in_fields = in_fields
         self.out_fields = in_fields
@@ -345,7 +325,7 @@ class RBUpsampling(enn.EquivariantModule):
         
         batch, _, in_width, in_depth = input_shape
         
-        out_height = self.in_height * self.v_scale
+        out_height = self.in_dims[-1] * self.v_scale
         out_width = in_width * self.h_scale
         out_depth = in_depth * self.h_scale
         
@@ -355,7 +335,6 @@ class RBUpsampling(enn.EquivariantModule):
 # modified copy of escnn.nn.InnerBatchNorm that fixes it for 3D data
 from escnn.nn.modules.utils import indexes_from_labels
 class InnerBatchNorm3D(enn.EquivariantModule):
-    
     def __init__(self,
                  in_type: FieldType,
                  eps: float = 1e-05,

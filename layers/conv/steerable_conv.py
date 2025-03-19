@@ -79,9 +79,8 @@ class RBSteerableConv(enn.EquivariantModule):
         
         v_pad_mode = v_pad_mode.lower()
         h_pad_mode = h_pad_mode.lower()
-        
-        assert v_pad_mode.lower() in ['valid', 'zero']
-        assert h_pad_mode.lower() in ['valid', 'zero', 'circular', 'reflect', 'replicate']
+        assert v_pad_mode in ['valid', 'zero']
+        assert h_pad_mode in ['valid', 'zero', 'circular', 'reflect', 'replicate']
         assert len(in_dims) == 3
         
         if h_pad_mode == 'valid':
@@ -93,7 +92,7 @@ class RBSteerableConv(enn.EquivariantModule):
                          for i in [0, 1]]
         
         out_height = conv_utils.conv_output_size(in_dims[-1], v_kernel_size, v_stride, 
-                                            dilation=1, pad=v_pad_mode!='valid')
+                                                 dilation=1, pad=v_pad_mode!='valid')
         
         assert out_height%v_share == 0, 'the output height must be divisible by v_share'
         
@@ -101,12 +100,11 @@ class RBSteerableConv(enn.EquivariantModule):
         # applying a grouped 2d convolution
         r2_conv_in_type = FieldType(gspace, (out_height//v_share)*v_kernel_size*in_fields) # concatenated neighborhoods
         r2_conv_out_type = FieldType(gspace, (out_height//v_share)*out_fields)
-        out_type = FieldType(gspace, out_height*out_fields)
 
         self.r2_conv = enn.R2Conv(in_type=r2_conv_in_type, 
                                   out_type=r2_conv_out_type, 
                                   kernel_size=h_kernel_size, 
-                                  padding=tuple(h_padding), 
+                                  padding=tuple(h_padding), # vertical padding is done separately
                                   stride=h_stride, 
                                   dilation=h_dilation,
                                   padding_mode=h_pad_mode,
@@ -124,18 +122,16 @@ class RBSteerableConv(enn.EquivariantModule):
         self.in_fields = in_fields
         self.out_fields = out_fields
         
-        self.in_height = in_dims[-1]
-        self.out_height = out_height
-        
         # in_ and out_type are the stacked fields accross the height dimension
-        self.in_type = FieldType(gspace, self.in_height*self.in_fields) # without any neighborhood concatenation
+        self.in_type = FieldType(gspace, in_dims[-1]*self.in_fields) # without any neighborhood concatenation
+        self.out_type = FieldType(gspace, out_height*self.out_fields) # without any neighborhood concatenation
+        
         self.r2_conv_in_type = r2_conv_in_type # with neighborhood concatenation and vsharing
         self.r2_conv_out_type = r2_conv_out_type # with vsharing
-        self.out_type = out_type
         
         self.in_dims = in_dims
         self.out_dims = [conv_utils.conv_output_size(in_dims[i], h_kernel_size, h_stride, dilation=h_dilation, 
-                                                pad=h_pad_mode!='valid', equal_pad=True) 
+                                                     pad=h_pad_mode!='valid', equal_pad=True) 
                          for i in [0, 1]] + [out_height]
         
         self.v_pad = v_pad_mode!='valid' # whether same padding is applied
@@ -184,13 +180,13 @@ class RBSteerableConv(enn.EquivariantModule):
         """
         # split height and field dimension
         tensor = tensor.reshape(-1, 
-                                self.in_height, 
+                                self.in_dims[-1], 
                                 sum(field.size for field in self.in_fields), 
                                 *self.in_dims[:2])
 
         if self.v_pad:
             # pad height
-            padding = conv_utils.required_same_padding(self.in_height, self.v_kernel_size, 
+            padding = conv_utils.required_same_padding(self.in_dims[-1], self.v_kernel_size, 
                                                   self.v_stride, dilation=1, split=True)
             tensor = F.pad(tensor, (*([0,0]*3), *padding)) # shape (b,padH,fields,w,d)
         
@@ -205,16 +201,24 @@ class RBSteerableConv(enn.EquivariantModule):
     
     
     def _concat_v_share_along_batch(self, tensor: Tensor) -> Tensor:
+        """Concatenates neighborhoods sharing the same kernel along the batch dimension.
+
+        Args:
+            tensor (Tensor): The tensor of shape [batch, outHeight*ksize*sum(fieldsizes), width, depth].
+
+        Returns:
+            Tensor: The transformed tensor of shape [batch*v_share, (outHeight/v_share)*ksize*sum(fieldsizes), width, depth].
+        """
         batch_size, width, depth = tensor.shape[0], *tensor.shape[-2:]
         
         # factor out height dimension
-        tensor = tensor.reshape(batch_size, self.out_height, -1, width, depth) # shape (b,outH,ksize*fields,w,d)
+        tensor = tensor.reshape(batch_size, self.out_dims[-1], -1, width, depth) # shape (b,outH,ksize*fields,w,d)
         
         # concatenate neighborhoods sharing the same kernel along the batch dimension
-        # to shape (b*v_share,outH//v_share,ksize*fields,w,d)
-        tensor = tensor.reshape(batch_size, self.out_height//self.v_share, self.v_share, -1, width, depth)
+        # to shape (b*v_share,outH/v_share,ksize*fields,w,d)
+        tensor = tensor.reshape(batch_size, self.out_dims[-1]//self.v_share, self.v_share, -1, width, depth)
         tensor = tensor.transpose(1, 2)
-        tensor = tensor.reshape(batch_size*self.v_share, self.out_height//self.v_share, -1, width, depth)
+        tensor = tensor.reshape(batch_size*self.v_share, self.out_dims[-1]//self.v_share, -1, width, depth)
         
         tensor = tensor.flatten(start_dim=1, end_dim=2)
 
@@ -222,16 +226,24 @@ class RBSteerableConv(enn.EquivariantModule):
     
     
     def _split_v_share_along_batch(self, tensor: Tensor) -> Tensor:
+        """Reverses the transformation of `_concat_v_share_along_batch`.
+
+        Args:
+            tensor (Tensor): The tensor of shape [batch*v_share, (outHeight/v_share)*sum(fieldsizes), width, depth].
+
+        Returns:
+            Tensor: The transformed tensor of shape [batch, outHeight*sum(fieldsizes), width, depth].
+        """
         batch_size, width, depth = tensor.shape[0]//self.v_share, *tensor.shape[-2:]
         
         # factor out height dimension
-        tensor = tensor.reshape(batch_size, self.out_height, -1, width, depth) # shape (b*v_share,outH//v_share,fields,w,d)
+        tensor = tensor.reshape(batch_size, self.out_dims[-1], -1, width, depth) # shape (b*v_share,outH//v_share,fields,w,d)
         
         # split neighborhoods sharing the same kernel of the batch dimension
         # to shape (b,outH,fields,w,d)
-        tensor = tensor.reshape(batch_size, self.v_share, self.out_height//self.v_share, -1, width, depth)
+        tensor = tensor.reshape(batch_size, self.v_share, self.out_dims[-1]//self.v_share, -1, width, depth)
         tensor = tensor.transpose(1, 2)
-        tensor = tensor.reshape(batch_size, self.out_height, -1, width, depth)
+        tensor = tensor.reshape(batch_size, self.out_dims[-1], -1, width, depth)
         
         tensor = tensor.flatten(start_dim=1, end_dim=2)
 
@@ -253,14 +265,6 @@ class RBSteerableConv(enn.EquivariantModule):
         batch_size = input_shape[0]
         
         return (batch_size, self.out_type.size) + tuple(self.out_dims[:2])
-    
-    
-    def train(self, *args, **kwargs):
-        return self.r2_conv.train(*args, **kwargs)
-    
-    
-    def eval(self, *args, **kwargs):
-        return self.r2_conv.eval(*args, **kwargs)
     
     
     def check_equivariance(self, atol: float = 1e-7, rtol: float = 1e-5) -> list[tuple[Any, float]]:
@@ -322,17 +326,14 @@ class RBPooling(enn.EquivariantModule):
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] // h_kernel_size for i in [0, 1]] + [in_dims[-1] // v_kernel_size]
         
-        self.in_height = in_dims[-1]
-        self.out_height = self.out_dims[-1]
-        
         self.in_fields = in_fields
         self.out_fields = in_fields
         
         self.v_kernel_size = v_kernel_size
         self.h_kernel_size = h_kernel_size
         
-        self.in_type = FieldType(gspace, self.in_height * self.in_fields)
-        self.out_type = FieldType(gspace, self.out_height * self.in_fields)
+        self.in_type = FieldType(gspace, self.in_dims[-1] * self.in_fields)
+        self.out_type = FieldType(gspace, self.out_dims[-1] * self.in_fields)
         
         self.pool_op = F.max_pool3d if type.lower() == 'max' else F.avg_pool3d
         
@@ -351,7 +352,7 @@ class RBPooling(enn.EquivariantModule):
         
         # transform tensor to be able to apply the torch pooling operation
         tensor = input.tensor.reshape(-1, 
-                                      self.in_height, 
+                                      self.in_dims[-1], 
                                       sum(field.size for field in self.in_fields), 
                                       *self.in_dims[:2])
         tensor = tensor.permute(0, 2, 3, 1, 4)
@@ -410,17 +411,14 @@ class RBUpsampling(enn.EquivariantModule):
         self.in_dims = in_dims
         self.out_dims = [in_dims[i] * h_scale for i in [0, 1]] + [in_dims[-1] * v_scale]
         
-        self.in_height = in_dims[-1]
-        self.out_height = self.out_dims[-1]
-        
         self.in_fields = in_fields
         self.out_fields = in_fields
         
         self.v_scale = v_scale
         self.h_scale = h_scale
         
-        self.in_type = FieldType(gspace, self.in_height * self.in_fields)
-        self.out_type = FieldType(gspace, self.out_height * self.in_fields)
+        self.in_type = FieldType(gspace, self.in_dims[-1] * self.in_fields)
+        self.out_type = FieldType(gspace, self.out_dims[-1] * self.in_fields)
         
         
     def forward(self, input: GeometricTensor) -> GeometricTensor:
@@ -437,7 +435,7 @@ class RBUpsampling(enn.EquivariantModule):
         
         # transform tensor to be able to apply the torch upsampling operation
         tensor = input.tensor.reshape(-1, 
-                                      self.in_height, 
+                                      self.in_dims[-1], 
                                       sum(field.size for field in self.in_fields), 
                                       *self.in_dims[:2])
         tensor = tensor.permute(0, 2, 3, 1, 4)

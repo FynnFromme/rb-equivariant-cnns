@@ -16,10 +16,11 @@ def conv_output_size(in_size: int, kernel_size: int, stride: int, dilation: int,
     Returns:
         int: The dimension's size after applying convolution.
     """
-    padding = 0
     if pad:
         pad_split = required_same_padding(in_size, kernel_size, stride, dilation, split=True)
         padding = 2*pad_split[1] if equal_pad else sum(pad_split)
+    else:
+        padding = 0
 
     return ((in_size - dilation*(kernel_size-1) + padding - 1) // stride) + 1
 
