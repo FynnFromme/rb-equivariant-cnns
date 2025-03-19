@@ -1,5 +1,5 @@
 {
-    "model_type": "3DCNN",
+    "conv_type": "Conv3D",
     "batch_size": 64,
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
     "n_train": 24060,

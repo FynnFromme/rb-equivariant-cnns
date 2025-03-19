@@ -1,5 +1,5 @@
 {
-    "model_type": "steerableCNN",
+    "conv_type": "SteerableConv",
     "ae_model_name": "D4cnn",
     "ae_train_name": "hp_search/016_3layer_lc32",
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",

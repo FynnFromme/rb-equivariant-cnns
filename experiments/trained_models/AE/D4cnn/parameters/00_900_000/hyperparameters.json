@@ -1,5 +1,5 @@
 {
-    "model_type": "steerableCNN",
+    "conv_type": "SteerableConv",
     "simulation_name": "x48_y48_z32_Ra2500_Pr0.7_t0.01_snap0.125_dur300",
     "h_kernel_size": 5,
     "v_kernel_size": 5,
