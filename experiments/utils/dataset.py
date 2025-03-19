@@ -39,10 +39,10 @@ class RBDataset(IterableDataset):
         self.mean, self.std = standardization_params(sim_file)
         self.snapshot_shape = snapshot_shape(sim_file, dataset)
         self.snaps_per_sim = num_samples_per_sim(sim_file, dataset)
-        self.snaps_in_dataset = num_samples(sim_file, dataset) # total number of samples in the dataset (regardless of current slice)
-        self.num_simulations = self.snaps_in_dataset // self.snaps_per_sim
+        self.snaps_available = num_samples(sim_file, dataset)
+        self.num_simulations = self.snaps_available // self.snaps_per_sim
         
-        slice_end = min(slice_end, self.snaps_in_dataset) if slice_end != -1 else self.snaps_in_dataset
+        slice_end = min(slice_end, self.snaps_available) if slice_end != -1 else self.snaps_available
         
         self.num_samples = min(slice_end-slice_start, samples) if samples != -1 else slice_end-slice_start
 
@@ -76,8 +76,8 @@ class RBDataset(IterableDataset):
     
     def iterate_simulations(self) -> Generator['RBDataset', None, None]:
         """Yields datasets that are sliced to the data windows of the respective simulations."""
-        sim_start_indices = range(0, self.snaps_in_dataset, self.snaps_per_sim)
-        sim_end_indices = range(self.snaps_per_sim, self.snaps_in_dataset+1, self.snaps_per_sim)
+        sim_start_indices = range(0, self.snaps_available, self.snaps_per_sim)
+        sim_end_indices = range(self.snaps_per_sim, self.snaps_available+1, self.snaps_per_sim)
         
         for start, end in zip(sim_start_indices, sim_end_indices):
             yield RBDataset(self.sim_file, self.dataset, self.device, samples=-1, shuffle=self.shuffle, 
@@ -188,8 +188,8 @@ class RBForecastDataset(RBDataset):
     
     def compute_forecasting_indices(self, start: int = None, end: int = None):
         # make sure that there are no forecasting samples across simulation boundaries
-        sim_start_indices = range(0, self.snaps_in_dataset, self.snaps_per_sim)
-        sim_end_indices = range(self.snaps_per_sim, self.snaps_in_dataset+1, self.snaps_per_sim)
+        sim_start_indices = range(0, self.snaps_available, self.snaps_per_sim)
+        sim_end_indices = range(self.snaps_per_sim, self.snaps_available+1, self.snaps_per_sim)
         
         indices = []
         for sim_start, sim_end in zip(sim_start_indices, sim_end_indices):
@@ -202,8 +202,8 @@ class RBForecastDataset(RBDataset):
     
     def iterate_simulations(self) -> Generator['RBForecastDataset', None, None]:
         """Yields datasets that are sliced to the data windows of the respective simulations."""
-        sim_start_indices = range(0, self.snaps_in_dataset, self.snaps_per_sim)
-        sim_end_indices = range(self.snaps_per_sim, self.snaps_in_dataset+1, self.snaps_per_sim)
+        sim_start_indices = range(0, self.snaps_available, self.snaps_per_sim)
+        sim_end_indices = range(self.snaps_per_sim, self.snaps_available+1, self.snaps_per_sim)
         
         for start, end in zip(sim_start_indices, sim_end_indices):
             yield RBForecastDataset(self.sim_file, self.dataset, self.warmup_seq_length, self.forecast_seq_length, 

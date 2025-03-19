@@ -38,24 +38,24 @@ class DataAugmentation:
     
     
     def transform(self, input: Tensor, transformation: GroupElement) -> Tensor:
-        input = _to_da_shape(input)
+        input = self._to_da_shape(input)
 
         input = enn.GeometricTensor(input, self.data_aug_type)
         transformed_input = input.transform(transformation)
         transformed_input = transformed_input.tensor
         
-        transformed_input = _to_original_shape(transformed_input)
+        transformed_input = self._to_original_shape(transformed_input)
         return transformed_input
     
     def get_transformations(self) -> list[GroupElement]:
         return list(self.gspace.testing_elements)
 
 
-def _to_da_shape(tensor: Tensor) -> Tensor:
-    b, w, d, h, c = tensor.shape
-    return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
+    def _to_da_shape(self, tensor: Tensor) -> Tensor:
+        b, w, d, h, c = tensor.shape
+        return tensor.permute(0, 3, 4, 1, 2).reshape(b, h*c, w, d)
 
 
-def _to_original_shape(tensor: Tensor) -> Tensor:
-    b, _, w, d = tensor.shape
-    return tensor.reshape(b, -1, 4, w, d).permute(0, 3, 4, 1, 2)
+    def _to_original_shape(self, tensor: Tensor) -> Tensor:
+        b, _, w, d = tensor.shape
+        return tensor.reshape(b, -1, 4, w, d).permute(0, 3, 4, 1, 2)

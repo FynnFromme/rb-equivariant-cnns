@@ -64,6 +64,7 @@ def compute_latent_dataset(autoencoder, latent_file, sim_file, device, batch_siz
             
     h5file.close()
     
+    
 def _encode(autoencoder: torch.nn.Module, rb_loader: DataLoader, samples: int = None, 
             batch_size: int = None, augmentation_fn: Callable = lambda x:x):
     batches = None

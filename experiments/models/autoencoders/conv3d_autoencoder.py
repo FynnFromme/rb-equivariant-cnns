@@ -1,9 +1,10 @@
 from torch import nn
 from torch import Tensor
+import numpy as np
 
 from experiments.models import model_utils
 from collections import OrderedDict
-from typing import Callable
+from typing import Callable, Literal
 
 from layers.conv.conv3d import RB3DConv, RBPooling, RBUpsampling
 
@@ -93,55 +94,45 @@ class RB3DAutoencoder(nn.Sequential):
         super().__init__()
         if pool_layers is None: pool_layers = [True]*len(encoder_channels)
         
-        encoder_layers = []
-        decoder_layers = []
-        self.out_shapes = OrderedDict()
-        self.layer_params = OrderedDict()
-        self.out_shapes['Input'] = [4, *rb_dims]
+        self.encoder_layers = OrderedDict()
+        self.decoder_layers = OrderedDict()
         
         #####################
         ####   Encoder   ####
         #####################
-        in_channels, in_dims = 4, rb_dims
+        channels, dims = 4, rb_dims
         for i, (out_channels, pool) in enumerate(zip(encoder_channels, pool_layers), 1):
-            layer_drop_rate = 0 if i == 1 else drop_rate
-            
-            encoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
-                                               out_channels=out_channels, 
-                                               in_dims=in_dims, 
-                                               v_kernel_size=v_kernel_size, 
-                                               h_kernel_size=h_kernel_size,
-                                               input_drop_rate=layer_drop_rate, 
-                                               nonlinearity=nonlinearity, 
-                                               batch_norm=True))
-            in_channels = encoder_layers[-1].out_channels
-            self.out_shapes[f'EncoderConv{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'EncoderConv{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
+            conv = _Conv3DBlock(in_channels=channels, 
+                                out_channels=out_channels, 
+                                in_dims=dims, 
+                                v_kernel_size=v_kernel_size, 
+                                h_kernel_size=h_kernel_size,
+                                input_drop_rate=0 if i == 1 else drop_rate, 
+                                nonlinearity=nonlinearity, 
+                                batch_norm=True)
+            self.encoder_layers[f'EncoderConv{i}'] = conv
+            channels = conv.out_channels
             
             if pool:
-                encoder_layers.append(RBPooling(in_channels=in_channels, 
-                                                in_dims=in_dims, 
-                                                v_kernel_size=2, 
-                                                h_kernel_size=2))
-                self.out_shapes[f'Pooling{i}'] = [out_channels, *encoder_layers[-1].out_dims]
-                self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
-            in_dims = encoder_layers[-1].out_dims
+                pool = RBPooling(in_channels=channels, in_dims=dims, v_kernel_size=2, h_kernel_size=2)
+                self.encoder_layers[f'Pooling{i}'] = pool
+                dims = pool.out_dims
             
         ######################
         #### Latent Space ####
         ######################
-        encoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
-                                           out_channels=latent_channels, 
-                                           in_dims=in_dims, 
-                                           v_kernel_size=latent_v_kernel_size, 
-                                           h_kernel_size=latent_h_kernel_size,
-                                           input_drop_rate=drop_rate, 
-                                           nonlinearity=nonlinearity, 
-                                           batch_norm=True))
-        in_channels = encoder_layers[-1].out_channels
-        self.out_shapes[f'LatentConv'] = [latent_channels, *in_dims]
-        self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
-        self.latent_shape = [*in_dims, latent_channels]
+        conv = _Conv3DBlock(in_channels=channels, 
+                            out_channels=latent_channels, 
+                            in_dims=dims, 
+                            v_kernel_size=latent_v_kernel_size, 
+                            h_kernel_size=latent_h_kernel_size,
+                            input_drop_rate=drop_rate, 
+                            nonlinearity=nonlinearity, 
+                            batch_norm=True)
+        self.encoder_layers[f'LatentConv'] = conv
+        channels = conv.out_channels
+
+        self.latent_shape = [*dims, latent_channels]
             
         #####################
         ####   Decoder   ####
@@ -149,56 +140,43 @@ class RB3DAutoencoder(nn.Sequential):
         decoder_channels = reversed(encoder_channels)
         upsample_layers = reversed(pool_layers)
         for i, (out_channels, upsample) in enumerate(zip(decoder_channels, upsample_layers), 1):
-            decoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
-                                               out_channels=out_channels, 
-                                               in_dims=in_dims, 
-                                               v_kernel_size=v_kernel_size, 
-                                               h_kernel_size=h_kernel_size,
-                                               input_drop_rate=drop_rate, 
-                                               nonlinearity=nonlinearity, 
-                                               batch_norm=True))
-            in_channels = decoder_layers[-1].out_channels
-            self.out_shapes[f'DecoderConv{i}'] = [out_channels, *in_dims]
-            self.layer_params[f'DecoderConv{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
+            conv = _Conv3DBlock(in_channels=channels, 
+                                out_channels=out_channels, 
+                                in_dims=dims, 
+                                v_kernel_size=v_kernel_size, 
+                                h_kernel_size=h_kernel_size,
+                                input_drop_rate=drop_rate, 
+                                nonlinearity=nonlinearity, 
+                                batch_norm=True)
+            self.decoder_layers[f'DecoderConv{i}'] = conv
+            channels = conv.out_channels
             
             if upsample:
-                decoder_layers.append(RBUpsampling(in_channels=in_channels, in_dims=in_dims, v_scale=2, h_scale=2))
-                self.out_shapes[f'Upsampling{i}'] = [out_channels, *decoder_layers[-1].out_dims]
-                self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
-            in_dims = decoder_layers[-1].out_dims
+                upsample = RBUpsampling(in_channels=channels, in_dims=dims, v_scale=2, h_scale=2)
+                self.decoder_layers[f'Upsampling{i}'] = upsample
+                dims = upsample.out_dims
         
         ######################
         ####    Output    ####
         ######################
-        decoder_layers.append(_Conv3DBlock(in_channels=in_channels, 
+        conv = _Conv3DBlock(in_channels=channels, 
                                            out_channels=4, 
-                                           in_dims=in_dims, 
+                                           in_dims=dims, 
                                            v_kernel_size=v_kernel_size, 
                                            h_kernel_size=h_kernel_size,
                                            input_drop_rate=drop_rate, 
                                            nonlinearity=None, 
-                                           batch_norm=False))
-        self.out_shapes['OutputConv'] = [4, *in_dims]
-        self.layer_params['OutputConv'] = model_utils.count_trainable_params(decoder_layers[-1])
+                                           batch_norm=False)
+        self.decoder_layers['OutputConv'] = conv
         
-        self.in_dims, self.out_dims = tuple(encoder_layers[0].in_dims), tuple(decoder_layers[-1].out_dims)
+        first_layer = self.encoder_layers[next(iter(self.encoder_layers))]
+        last_layer = self.decoder_layers[next(reversed(self.decoder_layers))]
+        self.in_dims, self.out_dims = tuple(first_layer.in_dims), tuple(last_layer.out_dims)
         
         assert self.out_dims == self.in_dims == tuple(rb_dims)
         
-        self.encoder = nn.Sequential(*encoder_layers)
-        self.decoder = nn.Sequential(*decoder_layers)
-        
-    
-    def train(self, *args, **kwargs):
-        """Sets module to training mode."""
-        self.encoder.train(*args, **kwargs)
-        self.decoder.train(*args, **kwargs)
-    
-    
-    def eval(self, *args, **kwargs):
-        """Sets module to evaluation mode."""
-        self.encoder.eval(*args, **kwargs)
-        self.decoder.eval(*args, **kwargs)
+        self.encoder = nn.Sequential(self.encoder_layers)
+        self.decoder = nn.Sequential(self.decoder_layers)
         
         
     def forward(self, input: Tensor) -> Tensor:
@@ -302,6 +280,60 @@ class RB3DAutoencoder(nn.Sequential):
         return tensor.permute(0, 4, 1, 2, 3)
     
     
+    def layer_out_shapes(self, part: Literal['encoder', 'decoder', 'both'] = 'both') -> OrderedDict:
+        """Computes the output shape for the layers of the autoencoder.
+
+        Args:
+            part (Literal['encoder', 'decoder', 'both'], optional): Whether to include all layers or only layers of
+                the encoder or decoder. Defaults to 'both'.
+
+        Returns:
+            OrderedDict: The output shapes for the layers of the autoencoder.
+        """
+        layers = OrderedDict()
+        if part in ('encoder', 'both'):
+            layers.update(self.encoder_layers)
+        if part in ('decoder', 'both'):
+            layers.update(self.decoder_layers)
+        
+        out_shapes = OrderedDict()
+        out_shapes['Input'] = [*self.in_dims, 4]
+        for name, layer in layers.items():
+            out_shapes[name] = [*layer.out_dims, layer.out_channels]
+            
+        return out_shapes
+    
+    
+    def layer_params(self, part: Literal['encoder', 'decoder', 'both'] = 'both') -> OrderedDict:
+        """Computes the number of parameters for the layers of the autoencoder.
+
+        Args:
+            part (Literal['encoder', 'decoder', 'both'], optional): Whether to include all layers or only layers of
+                the encoder or decoder. Defaults to 'both'.
+
+        Returns:
+            OrderedDict: The number of parameters for the layers of the autoencoder.
+        """
+        layers = OrderedDict()
+        if part in ('encoder', 'both'):
+            layers.update(self.encoder_layers)
+        if part in ('decoder', 'both'):
+            layers.update(self.decoder_layers)
+        
+        params = OrderedDict()
+        for name, layer in layers.items():
+            params[name] = model_utils.count_trainable_params(layer)
+            
+        return params
+    
+    
     def summary(self):
-        """Print summary of the model."""
-        model_utils.summary(self, self.out_shapes, self.layer_params, self.out_shapes['LatentConv'])
+        """Print summary of the model."""       
+        out_shapes = self.layer_out_shapes()
+        params = self.layer_params()
+            
+        model_utils.summary(self, out_shapes, params, steerable=False)
+        
+        print(f'\nShape of latent space: {self.latent_shape}')
+    
+        print(f'\nLatent-Input-Ratio: {np.prod(self.latent_shape)/np.prod(out_shapes["Input"])*100:.2f}%')

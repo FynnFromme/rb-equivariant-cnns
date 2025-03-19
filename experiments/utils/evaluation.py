@@ -56,7 +56,6 @@ def compute_loss_per_channel(model: torch.nn.Module, test_loader: DataLoader, lo
     predictions = compute_predictions(model, test_loader, samples, batch_size, model_forward_kwargs)
     
     running_losses = None
-    ax_indices = None
     ax_sizes = None
     n = 0
     for outputs, predictions in predictions:
@@ -139,7 +138,6 @@ def compute_autoregressive_loss(model: torch.nn.Module, forecast_seq_length: int
             upper_bounds if multiple_losses else upper_bounds[0],)
 
 
-
 def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, samples: int = None, 
                                save_dir: str = None, filename: str = None, parallel_channels: int = 1):
     dataloader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
@@ -200,8 +198,9 @@ def compute_latent_sensitivity(model: torch.nn.Module, dataset: RBDataset, sampl
     return average_jacobian, average_jacobian_abs
 
 
-def compute_latent_integrated_gradients(model: torch.nn.Module, dataset: RBDataset, samples: int = None, save_dir: str = None, filename: str = None, 
-                                        steps: int = 50, num_channels: int = None, batch_size: int = 1):
+def compute_latent_integrated_gradients(model: torch.nn.Module, dataset: RBDataset, samples: int = None, 
+                                        save_dir: str = None, filename: str = None, steps: int = 50, 
+                                        num_channels: int = None, batch_size: int = 1):
     dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=False)
 
     model.eval()
@@ -227,7 +226,10 @@ def compute_latent_integrated_gradients(model: torch.nn.Module, dataset: RBDatas
                 channel_gradients = []
                 for channel in range(1, num_channels, 16):
                     end_channel = min(channel+16, num_channels)
-                    channel_gradient = torch.autograd.functional.jacobian(lambda x: model.encode(x)[..., channel:end_channel], input, vectorize=True)
+                    channel_gradient = torch.autograd.functional.jacobian(
+                        lambda x: model.encode(x)[..., channel:end_channel], 
+                        input, 
+                        vectorize=True)
                     channel_gradients.append(channel_gradient) # of shape (b,lw,ld,lh,lc,b,w,d,h,c) - l stands for latent
                     
                 gradients = torch.cat(channel_gradients , dim=4) # concat along latent channel dimension
@@ -245,7 +247,8 @@ def compute_latent_integrated_gradients(model: torch.nn.Module, dataset: RBDatas
                 
             ig = (batch-baseline) * ig
             
-            delta = torch.sum(ig) - torch.sum(model.encode(batch)[..., num_channels] - model.encode(baseline)[..., num_channels])
+            delta = torch.sum(ig) - torch.sum(
+                model.encode(batch)[..., num_channels] - model.encode(baseline)[..., num_channels])
             print(delta.item())
                     
 

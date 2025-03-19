@@ -1,5 +1,5 @@
 import experiments.models.model_utils as model_utils
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from collections import OrderedDict
 
 import numpy as np
@@ -100,136 +100,104 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
             nonlinearity (Callable, optional): The nonlinearity applied to the conv output. Set to `None` to
                 have no nonlinearity. Defaults to enn.ELU.
         """
-        
         super().__init__()
         if pool_layers is None: pool_layers = [True]*len(encoder_channels)
         
-        irrep_frequencies = (1, 1) if gspace._sg_id[1] == True else (1,) # depending whether using Cn or Dn group
+        irrep_frequencies = (1, 1) if gspace._sg_id[1] == True else (1,) # depending whether using Dn or Cn group
 
         rb_fields = [gspace.trivial_repr, gspace.irrep(*irrep_frequencies), gspace.trivial_repr]
-        hidden_field_type = [gspace.regular_repr]
+        self.hidden_field_type = [gspace.regular_repr]
         
-        encoder_layers = []
-        decoder_layers = []
-        self.out_shapes = OrderedDict()
-        self.layer_params = OrderedDict()
-        self.out_shapes['Input'] = [sum(f.size for f in rb_fields), 1, *rb_dims]
+        self.encoder_layers = OrderedDict()
+        self.decoder_layers = OrderedDict()
         
         #####################
         ####   Encoder   ####
         #####################
-        in_fields, in_dims = rb_fields, rb_dims
+        fields, dims = rb_fields, rb_dims
         for i, (out_channels, pool) in enumerate(zip(encoder_channels, pool_layers), 1):
-            out_fields = out_channels*hidden_field_type
-            layer_drop_rate = 0 if i == 1 else drop_rate # don't apply dropout to the network's input
-            
-            encoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
-                                                        in_fields=in_fields, 
-                                                        out_fields=out_fields, 
-                                                        in_dims=in_dims, 
-                                                        kernel_size=kernel_size, 
-                                                        input_drop_rate=layer_drop_rate, 
-                                                        nonlinearity=nonlinearity, 
-                                                        batch_norm=True))
-            in_fields = encoder_layers[-1].out_fields
-            self.out_shapes[f'EncoderConv{i}'] = [out_channels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'EncoderConv{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
+            conv = _Steerable3DConvBlock(gspace=gspace, 
+                                         in_fields=fields, 
+                                         out_fields=out_channels*self.hidden_field_type, 
+                                         in_dims=dims, 
+                                         kernel_size=kernel_size, 
+                                         input_drop_rate=0 if i == 1 else drop_rate, # don't apply dropout to the network's input, 
+                                         nonlinearity=nonlinearity, 
+                                         batch_norm=True)
+            self.encoder_layers[f'EncoderConv{i}'] = conv
+            fields = conv.out_fields
             
             if pool:
-                encoder_layers.append(RBPooling(gspace=gspace, 
-                                                in_fields=in_fields, 
-                                                in_dims=in_dims,
-                                                v_kernel_size=2, 
-                                                h_kernel_size=2))
-                self.out_shapes[f'Pooling{i}'] = [out_channels, sum(f.size for f in hidden_field_type), 
-                                                  *encoder_layers[-1].out_dims]
-                self.layer_params[f'Pooling{i}'] = model_utils.count_trainable_params(encoder_layers[-1])
-            in_dims = encoder_layers[-1].out_dims
+                pool = RBPooling(gspace=gspace, 
+                                in_fields=fields, 
+                                in_dims=dims,
+                                v_kernel_size=2, 
+                                h_kernel_size=2)
+                self.encoder_layers[f'Pooling{i}'] = pool
+                dims = pool.out_dims
             
         ######################
         #### Latent Space ####
         ######################
-        out_fields = latent_channels*hidden_field_type
-        encoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
-                                                    in_fields=in_fields, 
-                                                    out_fields=out_fields, 
-                                                    in_dims=in_dims, 
-                                                    kernel_size=latent_kernel_size, 
-                                                    input_drop_rate=drop_rate, 
-                                                    nonlinearity=nonlinearity, 
-                                                    batch_norm=True))
-        in_fields = encoder_layers[-1].out_fields
-        self.out_shapes[f'LatentConv'] = [latent_channels, sum(f.size for f in hidden_field_type), *in_dims]
-        self.layer_params[f'LatentConv'] = model_utils.count_trainable_params(encoder_layers[-1])
+        conv = _Steerable3DConvBlock(gspace=gspace, 
+                                     in_fields=fields, 
+                                     out_fields=latent_channels*self.hidden_field_type, 
+                                     in_dims=dims, 
+                                     kernel_size=latent_kernel_size, 
+                                     input_drop_rate=drop_rate, 
+                                     nonlinearity=nonlinearity, 
+                                     batch_norm=True)
+        self.encoder_layers[f'LatentConv'] = conv
+        fields = conv.out_fields
             
-        self.latent_shape = [*in_dims, sum(f.size for f in out_fields)]
+        self.latent_shape = [*dims, sum(f.size for f in latent_channels*self.hidden_field_type)]
             
         #####################
         ####   Decoder   ####
         #####################
         decoder_channels = reversed(encoder_channels)
         upsample_layers = reversed(pool_layers)
-        for i, (out_channels, upsample) in enumerate(zip(decoder_channels, upsample_layers), 1):
-            out_fields = out_channels*hidden_field_type
-            
-            decoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
-                                                        in_fields=in_fields, 
-                                                        out_fields=out_fields, 
-                                                        in_dims=in_dims, 
-                                                        kernel_size=kernel_size,
-                                                        input_drop_rate=drop_rate,
-                                                        nonlinearity=nonlinearity, 
-                                                        batch_norm=True))
-            in_fields = decoder_layers[-1].out_fields
-            self.out_shapes[f'DecoderConv{i}'] = [out_channels, sum(f.size for f in hidden_field_type), *in_dims]
-            self.layer_params[f'DecoderConv{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
+        for i, (out_channels, upsample) in enumerate(zip(decoder_channels, upsample_layers), 1):            
+            conv = _Steerable3DConvBlock(gspace=gspace, 
+                                         in_fields=fields, 
+                                         out_fields=out_channels*self.hidden_field_type, 
+                                         in_dims=dims, 
+                                         kernel_size=kernel_size,
+                                         input_drop_rate=drop_rate,
+                                         nonlinearity=nonlinearity, 
+                                         batch_norm=True)
+            self.decoder_layers[f'DecoderConv{i}'] = conv
+            fields = conv.out_fields
             
             if upsample:
-                decoder_layers.append(RBUpsampling(gspace=gspace, 
-                                                in_fields=in_fields, 
-                                                in_dims=in_dims,
-                                                v_scale=2, 
-                                                h_scale=2))
-                self.out_shapes[f'Upsampling{i}'] = [out_channels, sum(f.size for f in hidden_field_type), 
-                                                     *decoder_layers[-1].out_dims]
-                self.layer_params[f'Upsampling{i}'] = model_utils.count_trainable_params(decoder_layers[-1])
-            in_dims = decoder_layers[-1].out_dims
+                upsample = RBUpsampling(gspace=gspace, in_fields=fields, in_dims=dims, v_scale=2, h_scale=2)
+                self.decoder_layers[f'Upsampling{i}'] = upsample
+                dims = upsample.out_dims
         
         ######################
         ####    Output    ####
         ######################
-        decoder_layers.append(_Steerable3DConvBlock(gspace=gspace, 
-                                                    in_fields=in_fields, 
-                                                    out_fields=rb_fields, 
-                                                    in_dims=in_dims, 
-                                                    kernel_size=kernel_size, 
-                                                    input_drop_rate=drop_rate, 
-                                                    nonlinearity=None, 
-                                                    batch_norm=False))
-        self.out_shapes['OutputConv'] = [sum(f.size for f in rb_fields), 1, *in_dims]
-        self.layer_params['OutputConv'] = model_utils.count_trainable_params(decoder_layers[-1])
+        conv = _Steerable3DConvBlock(gspace=gspace, 
+                                     in_fields=fields, 
+                                     out_fields=rb_fields, 
+                                     in_dims=dims, 
+                                     kernel_size=kernel_size, 
+                                     input_drop_rate=drop_rate, 
+                                     nonlinearity=None, 
+                                     batch_norm=False)
+        self.decoder_layers['OutputConv'] = conv
         
-        self.in_type, self.out_type = encoder_layers[0].in_type, decoder_layers[-1].out_type
-        self.in_fields, self.out_fields = encoder_layers[0].in_fields, decoder_layers[-1].out_fields
-        self.in_dims, self.out_dims = tuple(encoder_layers[0].in_dims), tuple(decoder_layers[-1].out_dims)
+        first_layer = self.encoder_layers[next(iter(self.encoder_layers))]
+        last_layer = self.decoder_layers[next(reversed(self.decoder_layers))]
+        self.in_type, self.out_type = first_layer.in_type, last_layer.out_type
+        self.in_fields, self.out_fields = first_layer.in_fields, last_layer.out_fields
+        self.in_dims, self.out_dims = tuple(first_layer.in_dims), tuple(last_layer.out_dims)
         
         assert self.out_dims == self.in_dims == tuple(rb_dims)
         assert self.out_fields == self.in_fields == rb_fields
         
-        self.encoder = enn.SequentialModule(*encoder_layers)
-        self.decoder = enn.SequentialModule(*decoder_layers)
-        
-    
-    def train(self, *args, **kwargs):
-        """Sets module to training mode."""
-        self.encoder.train(*args, **kwargs)
-        self.decoder.train(*args, **kwargs)
-    
-    
-    def eval(self, *args, **kwargs):
-        """Sets module to evaluation mode."""
-        self.encoder.eval(*args, **kwargs)
-        self.decoder.eval(*args, **kwargs)
+        self.encoder = enn.SequentialModule(self.encoder_layers)
+        self.decoder = enn.SequentialModule(self.decoder_layers)
     
         
     def forward(self, input: Tensor) -> Tensor:
@@ -380,7 +348,7 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         training = self.training
         self.eval()
         
-        x = torch.randn(3, self.in_dims[2], *self.in_dims[:2], 4)
+        x = torch.randn(3, self.in_dims[-1], *self.in_dims[:2], 4)
         x = self._from_input_shape(x)
         if gpu_device is not None: 
             x = x.to(gpu_device)
@@ -415,6 +383,63 @@ class RB3DSteerableAutoencoder(enn.EquivariantModule):
         return errors
     
     
+    def layer_out_shapes(self, part: Literal['encoder', 'decoder', 'both'] = 'both') -> OrderedDict:
+        """Computes the output shape for the layers of the autoencoder.
+
+        Args:
+            part (Literal['encoder', 'decoder', 'both'], optional): Whether to include all layers or only layers of
+                the encoder or decoder. Defaults to 'both'.
+
+        Returns:
+            OrderedDict: The output shapes for the layers of the autoencoder.
+        """
+        layers = OrderedDict()
+        if part in ('encoder', 'both'):
+            layers.update(self.encoder_layers)
+        if part in ('decoder', 'both'):
+            layers.update(self.decoder_layers)
+        
+        out_shapes = OrderedDict()
+        out_shapes['Input'] = [*self.in_dims, 4, 1]
+        for i, (name, layer) in enumerate(layers.items(), 1):
+            if i < len(layers):
+                out_shapes[name] = [*layer.out_dims, len(layer.out_fields), sum(f.size for f in self.hidden_field_type)]
+            else:
+                out_shapes[name] = [*layer.out_dims, 4, 1]
+            
+        return out_shapes
+    
+    
+    def layer_params(self, part: Literal['encoder', 'decoder', 'both'] = 'both') -> OrderedDict:
+        """Computes the number of parameters for the layers of the autoencoder.
+
+        Args:
+            part (Literal['encoder', 'decoder', 'both'], optional): Whether to include all layers or only layers of
+                the encoder or decoder. Defaults to 'both'.
+
+        Returns:
+            OrderedDict: The number of parameters for the layers of the autoencoder.
+        """
+        layers = OrderedDict()
+        if part in ('encoder', 'both'):
+            layers.update(self.encoder_layers)
+        if part in ('decoder', 'both'):
+            layers.update(self.decoder_layers)
+        
+        params = OrderedDict()
+        for i, (name, layer) in enumerate(layers.items(), 1):
+            params[name] = model_utils.count_trainable_params(layer)
+            
+        return params
+    
+    
     def summary(self):
-        """Print summary of the model."""
-        model_utils.summary(self, self.out_shapes, self.layer_params, self.out_shapes['LatentConv'])
+        """Print summary of the model."""        
+        out_shapes = self.layer_out_shapes()
+        params = self.layer_params()
+            
+        model_utils.summary(self, out_shapes, params, steerable=True)
+        
+        print(f'\nShape of latent space: {out_shapes["LatentConv"]}')
+    
+        print(f'\nLatent-Input-Ratio: {np.prod(self.latent_shape)/np.prod(out_shapes["Input"])*100:.2f}%')
