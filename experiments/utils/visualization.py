@@ -20,23 +20,25 @@ import os
 import json
 
 
+
 def _predict_batches(model: torch.nn.Module, data_loader: DataLoader, dataset: RBDataset,
                      model_forward_kwargs: dict = {}):
     """Calculates the models output of a batch of raw simulation data."""
     
-    for (inputs, ground_truth) in data_loader:
-        # predict
-        model.eval()
-        preds = model(inputs, **model_forward_kwargs)
-        
-        ground_truth_stand = ground_truth.cpu().detach().numpy()
-        preds_stand = preds.cpu().detach().numpy()
-        
-        # remove standardization
-        ground_truth = dataset.de_standardize_batch(ground_truth_stand)
-        preds = dataset.de_standardize_batch(preds_stand)
-        
-        yield ground_truth, preds, ground_truth_stand, preds_stand
+    model.eval()
+    with torch.no_grad():
+        for (inputs, ground_truth) in data_loader:
+            # predict
+            preds = model(inputs, **model_forward_kwargs)
+            
+            ground_truth_stand = ground_truth.cpu().detach().numpy()
+            preds_stand = preds.cpu().detach().numpy()
+            
+            # remove standardization
+            ground_truth = dataset.de_standardize_batch(ground_truth_stand)
+            preds = dataset.de_standardize_batch(preds_stand)
+            
+            yield ground_truth, preds, ground_truth_stand, preds_stand
 
 
 def rb_autoencoder_animation(model: torch.nn.Module, 
@@ -133,22 +135,201 @@ def rb_autoencoder_animation(model: torch.nn.Module,
     anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
     
     os.makedirs(anim_dir, exist_ok=True)
-    anim.save(os.path.join(anim_dir, anim_name))
+    anim.save(os.path.join(anim_dir, anim_name), dpi=500)
     plt.close()
     
     
+def rb_autoencoder_animation_3d(model: torch.nn.Module, 
+                                anim_dir: str, 
+                                anim_name: str,
+                                fps: int, 
+                                sim_file: str, 
+                                device: str,
+                                feature: Literal['t', 'u', 'v', 'w'],
+                                dataset_name='test', 
+                                rotate: bool = False,
+                                angle_per_sec: int = 10,
+                                contour_levels: int = 50,
+                                batch_size=32,
+                                frames=np.inf,):
+    channel = ['t', 'u', 'v', 'w'].index(feature)
+    
+    dataset = RBDataset(sim_file, dataset_name, device, shuffle=False)
+    data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=False)
+    
+    predicted_batches_gen = _predict_batches(model, data_loader, dataset)
+    batch_y, batch_pred, batch_y_stand, batch_pred_stand = next(predicted_batches_gen)
+    batch_diff = batch_y_stand-batch_pred_stand
+    in_batch_frame = 0
+        
+    fig = plt.figure()
+    
+    ax1 = plt.subplot(1,3,1, projection='3d')
+    plt.axis('off')
+    ax2 = plt.subplot(1,3,2, projection='3d')
+    plt.axis('off')
+    ax3 = plt.subplot(1,3,3, projection='3d')
+    plt.axis('off')
+    
+    orig_faces = plot_cube_faces(batch_y[0, :, :, :, channel], ax1, 
+                                 contour_levels=contour_levels, show_back_faces=rotate)
+    pred_faces = plot_cube_faces(batch_pred[0, :, :, :, channel], ax2, 
+                                 contour_levels=contour_levels, show_back_faces=rotate)
+    diff_faces = plot_cube_faces(batch_diff[0, :, :, :, channel], ax3, cmap='RdBu_r',
+                                 contour_levels=contour_levels, show_back_faces=rotate)
+    
+    ax2.set_aspect('equal', adjustable='box')
+    ax1.set_aspect('equal', adjustable='box')
+    ax3.set_aspect('equal', adjustable='box')
+    
+    ax1.set_title('input')
+    ax2.set_title('output')
+    ax3.set_title('difference')
+    
+    elev = 15
+    ax1.view_init(elev=elev)
+    ax2.view_init(elev=elev)
+    ax3.view_init(elev=elev)
+    
+
+    set_clims(diff_faces, vmin=-1, vmax=1)
+    # divider = make_axes_locatable(ax3)
+    # cax = divider.append_axes('right', size='5%', pad=0.05)
+    # cbar = fig.colorbar(diff_faces[1], cax=cax, ticks=[0, 0.5, 1], extend="both", orientation='vertical')
+
+    last_frame = 0
+    def frame_updater(frame):
+        """Computes the next frame of the animation."""
+        nonlocal batch_y, batch_pred, batch_diff, batch_y_stand, batch_pred_stand, in_batch_frame, last_frame
+        nonlocal orig_faces, pred_faces, diff_faces
+        if frame <= last_frame:
+            # no new frame
+            return orig_faces + pred_faces + diff_faces
+        
+        in_batch_frame +=1
+        last_frame = frame
+
+        if in_batch_frame >= batch_size:
+            in_batch_frame = 0
+            batch_y, batch_pred, batch_y_stand, batch_pred_stand = next(predicted_batches_gen)
+            batch_diff = batch_y_stand-batch_pred_stand
+            
+        # update frames
+        reset_contours(orig_faces + pred_faces + diff_faces)
+        orig_faces = plot_cube_faces(batch_y[in_batch_frame, :, :, :, channel], ax1, 
+                                     contour_levels=contour_levels, show_back_faces=rotate)
+        pred_faces = plot_cube_faces(batch_pred[in_batch_frame, :, :, :, channel], ax2, 
+                                     contour_levels=contour_levels, show_back_faces=rotate)
+        diff_faces = plot_cube_faces(batch_diff[in_batch_frame, :, :, :, channel], ax3, cmap='RdBu_r',
+                                     contour_levels=contour_levels, show_back_faces=rotate)
+        
+        # cbar.remove()
+        # cbar = fig.colorbar(diff_faces[1], ax=ax3, orientation='vertical')
+        
+        plt.suptitle(f'Simulation {frame//dataset.snaps_per_sim + 1}')
+        
+        # update color map limits
+        orig_data = batch_y[in_batch_frame, :, :, :, channel]
+        pred_data = batch_pred[in_batch_frame, :, :, :, channel]
+        vmin = min(np.min(orig_data), np.min(pred_data))
+        vmax = max(np.max(orig_data), np.max(pred_data))
+        set_clims(orig_faces+pred_faces, vmin, vmax)
+        set_clims(diff_faces, vmin=-1, vmax=1)
+        
+        if rotate:
+            azim = -50 + angle_per_sec * frame/fps
+            ax1.view_init(elev=elev, azim=azim)
+            ax2.view_init(elev=elev, azim=azim)
+            ax3.view_init(elev=elev, azim=azim)
+        
+        return orig_faces + pred_faces + diff_faces
+    
+    frames = min(num_samples(sim_file, dataset_name), frames)
+    anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
+    
+    os.makedirs(anim_dir, exist_ok=True)
+    anim.save(os.path.join(anim_dir, anim_name), dpi=500)
+    plt.close()
+    
+    
+def plot_cube_faces(arr, ax, dims=(2*np.pi, 2*np.pi, 2), contour_levels=100, cmap='rainbow',
+                    show_back_faces=False) -> list:
+    x0 = np.linspace(0, dims[0], arr.shape[0])
+    y0 = np.linspace(0, dims[1], arr.shape[1])
+    z0 = np.linspace(0, dims[2], arr.shape[2])
+    x, y, z = np.meshgrid(x0, y0, z0)
+    
+    xmax, ymax, zmax = max(x0), max(y0), max(z0)
+    vmin, vmax = np.min(arr), np.max(arr)
+    levels = np.linspace(vmin, vmax, contour_levels)
+
+    z1 = ax.contourf(x[:, :, 0], y[:, :, 0], arr[:, :, -1].T,
+                     zdir='z', offset=zmax, vmin=vmin, vmax=vmax,
+                     levels=levels, cmap=cmap)
+    if show_back_faces:
+        z2 = ax.contourf(x[:, :, 0], y[:, :, 0], arr[:, :, 0].T,
+                        zdir='z', offset=0, vmin=vmin, vmax=vmax,
+                        levels=levels, cmap=cmap)
+    y1 = ax.contourf(x[0, :, :].T, arr[:, 0, :].T, z[0, :, :].T,
+                     zdir='y', offset=0, vmin=vmin, vmax=vmax,
+                     levels=levels, cmap=cmap)
+    if show_back_faces:
+        y2 = ax.contourf(x[0, :, :].T, arr[:, -1, :].T, z[0, :, :].T,
+                        zdir='y', offset=ymax, vmin=vmin, vmax=vmax,
+                        levels=levels, cmap=cmap)
+    x1 = ax.contourf(arr[-1, :, :].T, y[:, 0, :].T, z[:, 0, :].T,
+                     zdir='x', offset=xmax, vmin=vmin, vmax=vmax,
+                     levels=levels, cmap=cmap)
+    if show_back_faces:
+        x2 = ax.contourf(arr[0, :, :].T, y[:, 0, :].T, z[:, 0, :].T,
+                        zdir='x', offset=0, vmin=vmin, vmax=vmax,
+                        levels=levels, cmap=cmap)
+    
+    return [z1, z2, y1, y2, x1, x2] if show_back_faces else [z1, y1, x1]
+
+
+def reset_contours(contours):
+    for cont in contours:
+        for c in cont.collections:
+            c.remove()  # removes only the contours, leaves the rest intact
+            
+def set_clims(contours, vmin, vmax):
+    for cont in contours:
+        cont.set_clim(vmin, vmax)
+    
+    
+def _forecast(model: torch.nn.Module, data_loader: DataLoader, dataset: RBDataset,
+              steps: int):
+    
+    model.eval()
+    with torch.no_grad():
+        for (inputs, ground_truth_stand) in data_loader:
+            # predict
+            ground_truth_stand = ground_truth_stand.cpu().detach().numpy()
+            ground_truth = dataset.de_standardize_batch(ground_truth_stand)
+            
+            for i, snap in enumerate(model.forward_gen(inputs, steps=steps)):
+            
+                snap_stand = snap.cpu().detach().numpy()
+                
+                # remove standardization
+                snap = dataset.de_standardize_batch(snap_stand)
+                
+                yield ground_truth[:, i], snap, ground_truth_stand[:, i], snap_stand
+    
+    
 def rb_forecaster_animation(model: torch.nn.Module, 
-                       axis: int,
-                       anim_dir: str, 
-                       anim_name: str, 
-                       slice: int, 
-                       fps: int, 
-                       sim_file: str, 
-                       warmup_seq_length: int,
-                       device: str,
-                       feature: Literal['t', 'u', 'v', 'w'],
-                       dataset_name='test', 
-                       frames=np.inf):
+                            axis: int,
+                            anim_dir: str, 
+                            anim_name: str, 
+                            slice: int, 
+                            fps: int, 
+                            sim_file: str, 
+                            warmup_seq_length: int,
+                            device: str,
+                            feature: Literal['t', 'u', 'v', 'w'],
+                            dataset_name: str = 'test',
+                            num_forecasts: int = np.inf):
     channel = ['t', 'u', 'v', 'w'].index(feature)
     
     # dataset that includes one forecast sample per simulation
@@ -159,8 +340,7 @@ def rb_forecaster_animation(model: torch.nn.Module,
                                 forecast_seq_length=forecast_steps)
     data_loader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
     
-    model_forward_kwargs = {'steps': forecast_steps}
-    predicted_forecast_gen = _predict_batches(model, data_loader, dataset, model_forward_kwargs)
+    predicted_forecast_gen = _forecast(model, data_loader, dataset, steps=forecast_steps)
     y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
     forecast_frame = 0
 
@@ -175,22 +355,20 @@ def rb_forecaster_animation(model: torch.nn.Module,
     
     # initialize input snapshot
     ax = plt.subplot(1,3,1)
-    orig_data = np.rot90(y[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
+    orig_data = np.rot90(y[0, :, :, :, channel].take(indices=slice, axis=axis))
     orig_im = plt.imshow(orig_data, cmap='rainbow', extent=img_extent)
     plt.axis('off')
     ax.set_title('ground truth')
 
     # initialize output snapshot
     ax = plt.subplot(1,3,2)
-    pred_data = np.rot90(forecast[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
+    pred_data = np.rot90(forecast[0, :, :, :, channel].take(indices=slice, axis=axis))
     pred_im = plt.imshow(pred_data, cmap='rainbow', extent=img_extent)
     plt.axis('off')
     ax.set_title('forecast')
     
     # initialize diff snapshot
     ax = plt.subplot(1,3,3)
-    # orig_data_stand = np.rot90(y_stand[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
-    # pred_data_stand = np.rot90(forecast_stand[0, 0, :, :, :, channel].take(indices=slice, axis=axis))
     diff_im = plt.imshow(pred_data-orig_data, cmap='RdBu_r', extent=img_extent)
     plt.axis('off')
     ax.set_title('difference')
@@ -201,10 +379,9 @@ def rb_forecaster_animation(model: torch.nn.Module,
     # set color map limits
     vmin = min(np.min(y[..., channel]), np.min(forecast[..., channel]))
     vmax = max(np.max(y[..., channel]), np.max(forecast[..., channel]))
-    max_diff = np.max(np.abs(y[..., channel]-forecast[..., channel]))
     orig_im.set_clim(vmin=vmin, vmax=vmax)
     pred_im.set_clim(vmin=vmin, vmax=vmax)
-    diff_im.set_clim(vmin=-max_diff, vmax=max_diff)
+    diff_im.set_clim(vmin=-1, vmax=1)
 
     last_frame = 0
     sim = 1
@@ -214,42 +391,165 @@ def rb_forecaster_animation(model: torch.nn.Module,
         if frame <= last_frame:
             # no new frame
             return orig_im, pred_im
+        elif frame > last_frame+1:
+            raise Exception('Frames are assumed to be handled in order')
         
         forecast_frame += 1
         last_frame = frame
 
+        y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
+        
         if forecast_frame >= forecast_steps:
             forecast_frame = 0
-            y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
             sim += 1
-            # update color map limits
-            vmin = min(np.min(y[..., channel]), np.min(forecast[..., channel]))
-            vmax = max(np.max(y[..., channel]), np.max(forecast[..., channel]))
-            max_diff = np.max(np.abs(y[..., channel]-forecast[..., channel]))
-            orig_im.set_clim(vmin=vmin, vmax=vmax)
-            pred_im.set_clim(vmin=vmin, vmax=vmax)
-            diff_im.set_clim(vmin=-max_diff, vmax=max_diff)
         
         # update frames
-        orig_data = np.rot90(y[0, forecast_frame, :, :, :, channel].take(indices=slice, axis=axis))
-        pred_data = np.rot90(forecast[0, forecast_frame, :, :, :, channel].take(indices=slice, axis=axis))
+        orig_data = np.rot90(y[0, :, :, :, channel].take(indices=slice, axis=axis))
+        pred_data = np.rot90(forecast[0, :, :, :, channel].take(indices=slice, axis=axis))
         orig_im.set_array(orig_data)
         pred_im.set_array(pred_data)
         diff_im.set_array(orig_data-pred_data)
         
+        # update color map limits
+        vmin = min(np.min(orig_data), np.min(orig_data))
+        vmax = max(np.max(pred_data), np.max(pred_data))
+        orig_im.set_clim(vmin=vmin, vmax=vmax)
+        pred_im.set_clim(vmin=vmin, vmax=vmax)
+        
         plt.suptitle(f'Simulation {sim} - {forecast_frame+1} autoregressive steps')
-        
-        
         
         return orig_im, pred_im
     
-    frames = dataset.num_samples * dataset.forecast_seq_length
+    frames = min(dataset.num_samples, num_forecasts) * dataset.forecast_seq_length
     anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
     
     os.makedirs(anim_dir, exist_ok=True)
-    anim.save(os.path.join(anim_dir, anim_name))
+    anim.save(os.path.join(anim_dir, anim_name), dpi=500)
     plt.close()
     
+
+def rb_forecaster_animation_3d(model: torch.nn.Module, 
+                               anim_dir: str, 
+                               anim_name: str,
+                               fps: int, 
+                               sim_file: str, 
+                               warmup_seq_length: int,
+                               device: str,
+                               feature: Literal['t', 'u', 'v', 'w'],
+                               dataset_name='test', 
+                               rotate: bool = False,
+                               angle_per_sec: int = 10,
+                               contour_levels: int = 50,
+                               num_forecasts: int = np.inf):
+    channel = ['t', 'u', 'v', 'w'].index(feature)
+    
+    # dataset that includes one forecast sample per simulation
+    snaps_per_sim = num_samples_per_sim(sim_file, dataset_name)
+    forecast_steps = snaps_per_sim - warmup_seq_length
+    dataset = RBForecastDataset(sim_file, dataset_name, device=device, shuffle=False, 
+                                warmup_seq_length=warmup_seq_length, 
+                                forecast_seq_length=forecast_steps)
+    data_loader = DataLoader(dataset, batch_size=1, num_workers=0, drop_last=False)
+    
+    predicted_forecast_gen = _forecast(model, data_loader, dataset, steps=forecast_steps)
+    y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
+    diff = y_stand-forecast_stand
+    forecast_frame = 0
+        
+    fig = plt.figure()
+    
+    ax1 = plt.subplot(1,3,1, projection='3d')
+    plt.axis('off')
+    ax2 = plt.subplot(1,3,2, projection='3d')
+    plt.axis('off')
+    ax3 = plt.subplot(1,3,3, projection='3d')
+    plt.axis('off')
+    
+    orig_faces = plot_cube_faces(y[0, :, :, :, channel], ax1, 
+                                 contour_levels=contour_levels, show_back_faces=rotate)
+    pred_faces = plot_cube_faces(forecast[0, :, :, :, channel], ax2, 
+                                 contour_levels=contour_levels, show_back_faces=rotate)
+    diff_faces = plot_cube_faces(diff[0, :, :, :, channel], ax3, cmap='RdBu_r',
+                                 contour_levels=contour_levels, show_back_faces=rotate)
+    
+    ax2.set_aspect('equal', adjustable='box')
+    ax1.set_aspect('equal', adjustable='box')
+    ax3.set_aspect('equal', adjustable='box')
+    
+    ax1.set_title('input')
+    ax2.set_title('output')
+    ax3.set_title('difference')
+    
+    elev = 15
+    ax1.view_init(elev=elev)
+    ax2.view_init(elev=elev)
+    ax3.view_init(elev=elev)
+    
+
+    set_clims(diff_faces, vmin=-1, vmax=1)
+    # divider = make_axes_locatable(ax3)
+    # cax = divider.append_axes('right', size='5%', pad=0.05)
+    # cbar = fig.colorbar(diff_faces[1], cax=cax, ticks=[0, 0.5, 1], extend="both", orientation='vertical')
+
+    last_frame = 0
+    sim=1
+    def frame_updater(frame):
+        """Computes the next frame of the animation."""
+        nonlocal y, forecast, y_stand, forecast_stand, forecast_frame, last_frame, sim
+        nonlocal orig_faces, pred_faces, diff_faces
+        if frame <= last_frame:
+            # no new frame
+            return orig_faces + pred_faces + diff_faces
+        elif frame > last_frame+1:
+            raise Exception('Frames are assumed to be handled in order')
+
+        forecast_frame += 1
+        last_frame = frame
+
+        y, forecast, y_stand, forecast_stand = next(predicted_forecast_gen)
+        diff = y_stand-forecast_stand
+        
+        if forecast_frame >= forecast_steps:
+            forecast_frame = 0
+            sim += 1
+            
+        # update frames
+        reset_contours(orig_faces + pred_faces + diff_faces)
+        orig_faces = plot_cube_faces(y[0, :, :, :, channel], ax1, 
+                                     contour_levels=contour_levels, show_back_faces=rotate)
+        pred_faces = plot_cube_faces(forecast[0, :, :, :, channel], ax2, 
+                                     contour_levels=contour_levels, show_back_faces=rotate)
+        diff_faces = plot_cube_faces(diff[0, :, :, :, channel], ax3, cmap='RdBu_r',
+                                     contour_levels=contour_levels, show_back_faces=rotate)
+        
+        # cbar.remove()
+        # cbar = fig.colorbar(diff_faces[1], ax=ax3, orientation='vertical')
+        
+        plt.suptitle(f'Simulation {sim} - {forecast_frame+1} autoregressive steps')
+        
+        # update color map limits
+        orig_data = y[0, :, :, :, channel]
+        pred_data = forecast[0, :, :, :, channel]
+        vmin = min(np.min(orig_data), np.min(pred_data))
+        vmax = max(np.max(orig_data), np.max(pred_data))
+        set_clims(orig_faces+pred_faces, vmin, vmax)
+        set_clims(diff_faces, vmin=-1, vmax=1)
+        
+        if rotate:
+            azim = -50 + angle_per_sec * frame/fps
+            ax1.view_init(elev=elev, azim=azim)
+            ax2.view_init(elev=elev, azim=azim)
+            ax3.view_init(elev=elev, azim=azim)
+        
+        return orig_faces + pred_faces + diff_faces
+    
+    frames = min(dataset.num_samples, num_forecasts) * dataset.forecast_seq_length
+    anim = animation.FuncAnimation(fig, frame_updater, frames=frames, interval=1000/fps, blit=True)
+    
+    os.makedirs(anim_dir, exist_ok=True)
+    anim.save(os.path.join(anim_dir, anim_name), dpi=500)
+    plt.close()    
+
     
 def show_latent_patterns(sensitivity_data: np.ndarray, abs_sensitivity: bool, num: int, channel: int, 
                          slice: int | None, axis: int, cols: int = 5, seed: int = 0, contour: bool = True,
@@ -656,6 +956,7 @@ def plot_autoregressive_performance(results_dir: str, model_names: str | list, t
                             color=test_line.get_color(), alpha=0.2)
             
         if show_train:
+            x = range(1, len(results[f'{metric}_train'])+1)
             train_line, = plt.plot(x, results[f'{metric}_train'+median_suffix], label=f'{model_name}/{train_name} - train')
             if show_bounds:
                 ax.fill_between(x, results[f'{metric}_train_lower'], results[f'{metric}_train_upper'], 
